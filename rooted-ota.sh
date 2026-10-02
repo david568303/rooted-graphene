@@ -478,7 +478,7 @@ function githubAssetMetadata() {
 
 function resolveAPatchRelease() {
   local endpoint releaseJson managerJson source kernelPatchLine apatchKernelPatchVersion
-  local kernelReleaseJson kpimgJson kptoolsJson
+  local kernelReleaseJson='' kpimgJson kptoolsJson
 
   if [[ -n "$APATCH_MANAGER_URL" && -n "$KERNELPATCH_KPIMG_URL" && -n "$KERNELPATCH_KPTOOLS_URL" ]]; then
     return
