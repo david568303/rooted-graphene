@@ -1,0 +1,64 @@
+name: Sync upstream
+
+on:
+  # GitHub cannot subscribe a fork directly to another repository's push event.
+  # Poll at offset minutes to avoid the busiest points of the hour.
+  schedule:
+    - cron: '13,28,43,58 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge upstream main
+        env:
+          UPSTREAM_REPOSITORY: schnatterer/rooted-graphene
+          UPSTREAM_BRANCH: main
+        run: |
+          set -euo pipefail
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --no-tags upstream "$UPSTREAM_BRANCH"
+
+          upstream_ref="upstream/$UPSTREAM_BRANCH"
+          if git merge-base --is-ancestor "$upstream_ref" HEAD; then
+            echo "Already synchronized with $UPSTREAM_REPOSITORY@$UPSTREAM_BRANCH."
+            echo '### Upstream sync' >> "$GITHUB_STEP_SUMMARY"
+            echo 'No new upstream commits were found.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          before="$(git rev-parse HEAD)"
+          if ! git merge --no-ff --no-edit "$upstream_ref"; then
+            git merge --abort || true
+            echo "::error::Upstream changes conflict with fork-specific changes. No commit was pushed."
+            exit 1
+          fi
+
+          after="$(git rev-parse HEAD)"
+          git push origin HEAD:main
+
+          {
+            echo '### Upstream sync'
+            echo
+            echo "Merged \`$UPSTREAM_REPOSITORY@$UPSTREAM_BRANCH\` into \`main\`."
+            echo
+            echo "Fork changed from \`$before\` to \`$after\`."
+          } >> "$GITHUB_STEP_SUMMARY"
