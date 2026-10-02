@@ -392,9 +392,15 @@ every downloaded artifact is checked against the SHA-256 digest published by Git
 
 The original GrapheneOS `boot.img` is extracted from the OTA, patched with KernelPatch, and supplied to avbroot as a
 prepatched image. The build fails if `CONFIG_KALLSYMS=y` is missing or if avbroot rejects the prepatched image as
-incompatible. Before upload, the final signed OTA is re-extracted and KernelPatch must report `patched=true` for its boot
-kernel. Current APatch releases use signature authorization for the official manager, so the automated build does not
-create, store, or expose a reusable SuperKey.
+incompatible. It also fails on known fatal KernelPatch diagnostics, including an unresolved arm64 relocation table and
+required kernel symbols. This extra check is necessary because KernelPatch can otherwise return success and report
+`patched=true` for an image that does not boot. Before upload, the final signed OTA is re-extracted and KernelPatch must
+report `patched=true` for its boot kernel. Current APatch releases use signature authorization for the official manager,
+so the automated build does not create, store, or expose a reusable SuperKey.
+
+APatch 11224 / KernelPatch 0.13.3 cannot currently patch the Android 17 kernel shipped for `mustang`: KernelPatch reports
+an invalid arm64 relocation address and unresolved symbols. Builds for that kernel are intentionally rejected until the
+upstream compatibility issue is fixed. This does not affect the Magisk or pixincreate flavors.
 
 After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
 include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after

@@ -562,7 +562,24 @@ function patchAPatchBootImage() {
     mv kernel kernel.ori
     # Omitting -S uses APatch 11219+'s signature-authorized manager mode. This
     # avoids putting a reusable, root-equivalent SuperKey into CI or the image.
-    ./kptools -p -i kernel.ori -k kpimg -o kernel
+    ./kptools -p -i kernel.ori -k kpimg -o kernel 2>&1 | tee kptools-patch.log
+
+    # KernelPatch can exit successfully and mark an image as patched even when
+    # it failed to locate the arm64 relocation table. Such an image is not
+    # bootable (observed on the Android 17 Pixel kernel used by mustang). Do not
+    # let a syntactically patched but known-bad image reach a release.
+    if grep -Eqi \
+      "can'?t find arm64 relocation table|arm64 relocation kernel_va: 0xffffffffffffffff" \
+      kptools-patch.log; then
+      printRed 'KernelPatch could not resolve the arm64 relocation table; refusing to publish a non-bootable APatch image.'
+      exit 1
+    fi
+
+    if grep -Eq 'no symbol: (printk|memblock_[[:alnum:]_]*|__cfi_slowpath(_diag)?)' kptools-patch.log; then
+      printRed 'KernelPatch could not resolve kernel symbols required by this APatch patch; refusing to publish the image.'
+      exit 1
+    fi
+
     ./kptools repack 'extracted/boot.img'
 
     if [[ ! -s new-boot.img ]]; then
