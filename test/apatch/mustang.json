@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "full": {
+    "location_ota": "https://github.com/david568303/rooted-graphene/releases/download/2026092501/mustang-2026092501-07360c8-apatch-11224-kp0.13.9-ga308d88-test.zip",
+    "location_csig": "https://github.com/david568303/rooted-graphene/releases/download/2026092501/mustang-2026092501-07360c8-apatch-11224-kp0.13.9-ga308d88-test.zip.csig"
+  }
+}
