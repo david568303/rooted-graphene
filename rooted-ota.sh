@@ -78,11 +78,23 @@ APATCH_MANAGER_SHA256=''
 # renovate: datasource=github-releases packageName=bmax121/KernelPatch versioning=loose
 DEFAULT_KERNELPATCH_VERSION=0.13.9
 KERNELPATCH_VERSION=${KERNELPATCH_VERSION:-${DEFAULT_KERNELPATCH_VERSION}}
+# Optional immutable source commit. When set, kptools still comes from the
+# selected stable release, while kpimg is built from this exact
+# commit. This is intended for fixes merged after the latest release.
+KERNELPATCH_COMMIT=${KERNELPATCH_COMMIT:-''}
+KERNELPATCH_DISPLAY_VERSION=''
 KERNELPATCH_KPIMG_URL=''
 KERNELPATCH_KPIMG_SHA256=''
 KERNELPATCH_KPTOOLS_URL=''
 KERNELPATCH_KPTOOLS_SHA256=''
 APATCH_BOOT_IMAGE=''
+
+KERNELPATCH_SOURCE_REPO='https://github.com/bmax121/KernelPatch.git'
+KERNELPATCH_TOOLCHAIN_URL='https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz'
+KERNELPATCH_TOOLCHAIN_SHA256='62d66e0ad7bd7f2a183d236ee301a5c73c737c886c7944aa4f39415aab528daf'
+# First upstream main commit containing the GrapheneOS arm64 inlined-kCFI
+# fix (#311), plus the later boot-image padding fix (#316).
+MUSTANG_KERNELPATCH_TEST_COMMIT='a308d889c6eadcd01f4503615dee0b2f41e2eb62'
 
 SKIP_CLEANUP=${SKIP_CLEANUP:-''}
 
@@ -208,7 +220,7 @@ function checkBuildNecessary() {
   if [[ "$SKIP_APATCH" != 'true' ]]; then
     resolveAPatchRelease
     # e.g. mustang-2026092501-4647f74-apatch-11224-kp0.13.3-test.zip
-    POTENTIAL_ASSETS['apatch']="${DEVICE_ID}-${OTA_VERSION}-${currentCommit}-apatch-${APATCH_VERSION}-kp${KERNELPATCH_VERSION}$(createAssetSuffix).zip"
+    POTENTIAL_ASSETS['apatch']="${DEVICE_ID}-${OTA_VERSION}-${currentCommit}-apatch-${APATCH_VERSION}-kp${KERNELPATCH_DISPLAY_VERSION}$(createAssetSuffix).zip"
   else
     printGreen "SKIP_APATCH set, not creating APatch OTA"
   fi
@@ -332,7 +344,7 @@ function findLatestVersion() {
 
   if [[ "$SKIP_APATCH" != 'true' ]]; then
     resolveAPatchRelease
-    print "APatch version: $APATCH_VERSION; KernelPatch version: $KERNELPATCH_VERSION"
+    print "APatch version: $APATCH_VERSION; KernelPatch version: $KERNELPATCH_DISPLAY_VERSION"
     print "Install the matching official APatch manager after flashing: $APATCH_MANAGER_URL"
   fi
 
@@ -531,6 +543,16 @@ function resolveAPatchRelease() {
   fi
   validateReleaseVersion 'KERNELPATCH_VERSION' "$KERNELPATCH_VERSION"
 
+  if [[ -n "$KERNELPATCH_COMMIT" ]]; then
+    if [[ ! "$KERNELPATCH_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+      printRed 'KERNELPATCH_COMMIT must be a full 40-character lowercase commit SHA.'
+      exit 1
+    fi
+    KERNELPATCH_DISPLAY_VERSION="${KERNELPATCH_VERSION}-g${KERNELPATCH_COMMIT:0:7}"
+  else
+    KERNELPATCH_DISPLAY_VERSION="$KERNELPATCH_VERSION"
+  fi
+
   if [[ -z "$kernelReleaseJson" ]]; then
     kernelReleaseJson=$(githubApiGet \
       "https://api.github.com/repos/bmax121/KernelPatch/releases/tags/$KERNELPATCH_VERSION")
@@ -561,9 +583,45 @@ function downloadVerifiedFile() {
 
 function downloadAPatchDependencies() {
   resolveAPatchRelease
-  downloadVerifiedFile '.tmp/kpimg-android' "$KERNELPATCH_KPIMG_URL" "$KERNELPATCH_KPIMG_SHA256"
   downloadVerifiedFile '.tmp/kptools-linux' "$KERNELPATCH_KPTOOLS_URL" "$KERNELPATCH_KPTOOLS_SHA256"
   chmod +x '.tmp/kptools-linux'
+
+  if [[ -n "$KERNELPATCH_COMMIT" ]]; then
+    buildPinnedKernelPatchImage
+  else
+    downloadVerifiedFile '.tmp/kpimg-android' "$KERNELPATCH_KPIMG_URL" "$KERNELPATCH_KPIMG_SHA256"
+  fi
+}
+
+function buildPinnedKernelPatchImage() {
+  local sourceDir='.tmp/kernelpatch-source'
+  local toolchainArchive='.tmp/kernelpatch-aarch64-toolchain.tar.xz'
+  local toolchainDir='.tmp/kernelpatch-toolchain'
+  local compilerPrefix
+
+  rm -rf "$sourceDir" "$toolchainDir"
+  git init -q "$sourceDir"
+  git -C "$sourceDir" remote add origin "$KERNELPATCH_SOURCE_REPO"
+  git -C "$sourceDir" fetch --depth 1 origin "$KERNELPATCH_COMMIT"
+  git -C "$sourceDir" checkout -q --detach FETCH_HEAD
+  if [[ "$(git -C "$sourceDir" rev-parse HEAD)" != "$KERNELPATCH_COMMIT" ]]; then
+    printRed 'KernelPatch checkout did not resolve to the requested commit.'
+    exit 1
+  fi
+
+  downloadVerifiedFile "$toolchainArchive" "$KERNELPATCH_TOOLCHAIN_URL" "$KERNELPATCH_TOOLCHAIN_SHA256"
+  mkdir -p "$toolchainDir"
+  tar -xJf "$toolchainArchive" -C "$toolchainDir" --strip-components=1
+  compilerPrefix="$(pwd)/$toolchainDir/bin/aarch64-none-elf-"
+
+  make -C "$sourceDir/kernel" clean
+  make -C "$sourceDir/kernel" hdr kpimg ANDROID=1 TARGET_COMPILE="$compilerPrefix"
+  cp "$sourceDir/kernel/kpimg" '.tmp/kpimg-android'
+  if [[ ! -s '.tmp/kpimg-android' ]]; then
+    printRed 'Pinned KernelPatch build did not produce kpimg-android.'
+    exit 1
+  fi
+  print "Built KernelPatch kpimg from commit $KERNELPATCH_COMMIT ($(sha256sum '.tmp/kpimg-android' | awk '{print $1}'))"
 }
 
 function patchAPatchBootImage() {
@@ -571,8 +629,11 @@ function patchAPatchBootImage() {
   local extractedDir="$workDir/extracted"
 
   if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' ]]; then
-    printRed 'APatch is blocked for mustang: KernelPatch 0.13.3 and 0.13.9 bootloop when flashed persistently.'
-    exit 1
+    if [[ "$UPLOAD_TEST_OTA" != 'true' || "$KERNELPATCH_COMMIT" != "$MUSTANG_KERNELPATCH_TEST_COMMIT" ]]; then
+      printRed 'APatch production builds are blocked for mustang: released KernelPatch 0.13.3 and 0.13.9 bootloop.'
+      printRed 'Only the pinned post-0.13.9 candidate may be published to the isolated test feed before hardware validation.'
+      exit 1
+    fi
   fi
 
   APATCH_BOOT_IMAGE="$workDir/new-boot.img"

@@ -36,6 +36,10 @@ on:
         description: KernelPatch version, latest, or apatch for the manager-pinned version
         type: string
         default: ''
+      kernelpatch-commit:
+        description: Optional pinned KernelPatch source commit for a test build
+        type: string
+        default: ''
       pixincreate-version:
         description: pixincreate Magisk version or latest
         type: string
@@ -134,6 +138,9 @@ on:
       kernelpatch-version:
         description: KernelPatch version, latest, or apatch for the manager-pinned version
         required: false
+      kernelpatch-commit:
+        description: Optional pinned KernelPatch source commit for a test build
+        required: false
 
 permissions:
   contents: write
@@ -157,6 +164,7 @@ jobs:
           PIXINCREATE_APK_NAME_INPUT: ${{ inputs.pixincreate-apk-name || '' }}
           APATCH_VERSION_INPUT: ${{ inputs.apatch-version || '' }}
           KERNELPATCH_VERSION_INPUT: ${{ inputs.kernelpatch-version || '' }}
+          KERNELPATCH_COMMIT_INPUT: ${{ inputs.kernelpatch-commit || '' }}
           OTA_VERSION_INPUT: ${{ inputs.ota-version || '' }}
           SKIP_ROOTED_INPUT: ${{ toJSON(inputs.skip-rooted) == 'true' && 'true' || 'false' }}
           SKIP_ROOTLESS_INPUT: ${{ toJSON(inputs.skip-rootless) == 'true' && 'true' || 'false' }}
@@ -178,6 +186,7 @@ jobs:
           echo "PIXINCREATE_APK_NAME=$(echo "$PIXINCREATE_APK_NAME_INPUT" | xargs)" >> "$GITHUB_ENV"
           echo "APATCH_VERSION=$(echo "$APATCH_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
           echo "KERNELPATCH_VERSION=$(echo "$KERNELPATCH_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
+          echo "KERNELPATCH_COMMIT=$(echo "$KERNELPATCH_COMMIT_INPUT" | xargs)" >> "$GITHUB_ENV"
           echo "OTA_VERSION=$(echo "$OTA_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
           echo "FORCE_OTA_SERVER_UPLOAD=$FORCE_OTA_SERVER_UPLOAD_INPUT" >> "$GITHUB_ENV"
           echo "FORCE_BUILD=$FORCE_BUILD_INPUT" >> "$GITHUB_ENV"

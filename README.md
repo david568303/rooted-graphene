@@ -407,6 +407,12 @@ APatch is currently blocked for `mustang`. Both KernelPatch 0.13.3 and 0.13.9 bo
 though 0.13.9 can boot nonpersistently with `fastboot boot`. Automated builds fail closed until a flashed image passes
 hardware validation. This does not affect the Magisk or pixincreate flavors.
 
+For isolated testing, `KERNELPATCH_COMMIT=a308d889c6eadcd01f4503615dee0b2f41e2eb62` builds the payload from the exact
+post-0.13.9 upstream commit containing the GrapheneOS inlined-kCFI fix while retaining the released 0.13.9 `kptools`.
+The compiler archive, source commit, APatch manager, and released patch tool are all pinned or digest-verified. Mustang
+accepts this candidate only when `UPLOAD_TEST_OTA=true`; it cannot enter the production OTA feed until the boot, APatch
+root, recovery, OTA, and Zygisk checks have passed on hardware.
+
 After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
 include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after
 the basic APatch boot and root flow has been verified.
