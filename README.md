@@ -386,23 +386,25 @@ Another option [might be](https://github.com/schnatterer/rooted-graphene/pull/73
 
 The script can also build a separate `apatch` flavor by setting `SKIP_APATCH=false` (or disabling `skip-apatch` in the
 single-device workflow). `APATCH_VERSION=latest` resolves the latest stable [APatch](https://github.com/bmax121/APatch)
-release and then resolves the exact KernelPatch version used by that APatch release. The matching `kpimg-android` and
-`kptools-linux` artifacts are downloaded from the official [KernelPatch](https://github.com/bmax121/KernelPatch) release;
-every downloaded artifact is checked against the SHA-256 digest published by GitHub.
+release. KernelPatch is independently pinned by `KERNELPATCH_VERSION` because APatch 11224's older pinned KernelPatch
+0.13.3 does not boot on `mustang`; KernelPatch 0.13.9 was verified there with a nonpersistent `fastboot boot` test. Set
+`KERNELPATCH_VERSION=apatch` to use the version pinned by APatch itself, or `latest` to resolve the latest stable
+[KernelPatch](https://github.com/bmax121/KernelPatch) release. The matching `kpimg-android` and `kptools-linux` artifacts
+are downloaded from the official KernelPatch release, and every artifact is checked against GitHub's published SHA-256
+digest.
 
 The original GrapheneOS `boot.img` is extracted from the OTA, patched with KernelPatch, and supplied to avbroot as a
 prepatched image. The build fails if `CONFIG_KALLSYMS=y` is missing or if avbroot rejects the prepatched image as
 incompatible. It also fails when KernelPatch selects the ABI-ambiguous `memblock_alloc_try_nid` physical-allocation
-fallback, or when the unresolved arm64 relocation signature observed in the non-booting `mustang` test appears. These
-extra checks are necessary because KernelPatch can otherwise return success and report `patched=true` for an image that
-does not boot. Before upload, the final signed OTA is re-extracted and KernelPatch must report `patched=true` for its boot
-kernel. Current APatch releases use signature authorization for the official manager, so the automated build does not
-create, store, or expose a reusable SuperKey.
+fallback. The unresolved arm64 relocation diagnostic is retained as a warning: both KernelPatch versions used its
+relative-base kallsyms fallback on `mustang`, but 0.13.9 booted successfully while 0.13.3 did not. Before upload, the final
+signed OTA is re-extracted and KernelPatch must report `patched=true` for its boot kernel. Current APatch releases use
+signature authorization for the official manager, so the automated build does not create, store, or expose a reusable
+SuperKey.
 
-APatch 11224 / KernelPatch 0.13.3 cannot currently patch the Android 17 kernel shipped for `mustang`: KernelPatch reports
-an unresolved arm64 relocation table and the resulting image has been confirmed not to boot. That warning is not proven
-to be the root cause; builds with the same signature are rejected until the underlying compatibility issue is identified
-and a boot-tested fix is available. This does not affect the Magisk or pixincreate flavors.
+APatch 11224 / KernelPatch 0.13.3 cannot patch the Android 17 kernel shipped for `mustang`: the resulting image was
+confirmed not to boot. KernelPatch 0.13.9 fixes the observed boot failure and is the default for APatch builds in this
+fork. This does not affect the Magisk or pixincreate flavors.
 
 After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
 include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after

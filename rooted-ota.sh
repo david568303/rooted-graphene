@@ -66,7 +66,13 @@ DEFAULT_APATCH_VERSION=11224
 APATCH_VERSION=${APATCH_VERSION:-${DEFAULT_APATCH_VERSION}}
 APATCH_MANAGER_URL=''
 APATCH_MANAGER_SHA256=''
-KERNELPATCH_VERSION=''
+# APatch 11224 pins KernelPatch 0.13.3, but that image does not boot on
+# mustang. KernelPatch 0.13.9 has been verified with a nonpersistent
+# `fastboot boot` test on mustang. Keep this independently pinned so Renovate
+# can propose later KernelPatch releases without silently changing builds.
+# renovate: datasource=github-releases packageName=bmax121/KernelPatch versioning=loose
+DEFAULT_KERNELPATCH_VERSION=0.13.9
+KERNELPATCH_VERSION=${KERNELPATCH_VERSION:-${DEFAULT_KERNELPATCH_VERSION}}
 KERNELPATCH_KPIMG_URL=''
 KERNELPATCH_KPIMG_SHA256=''
 KERNELPATCH_KPTOOLS_URL=''
@@ -458,9 +464,10 @@ function githubAssetMetadata() {
 }
 
 function resolveAPatchRelease() {
-  local endpoint releaseJson managerJson source kernelPatchLine kernelReleaseJson kpimgJson kptoolsJson
+  local endpoint releaseJson managerJson source kernelPatchLine apatchKernelPatchVersion
+  local kernelReleaseJson kpimgJson kptoolsJson
 
-  if [[ -n "$KERNELPATCH_VERSION" ]]; then
+  if [[ -n "$APATCH_MANAGER_URL" && -n "$KERNELPATCH_KPIMG_URL" && -n "$KERNELPATCH_KPTOOLS_URL" ]]; then
     return
   fi
 
@@ -494,11 +501,22 @@ function resolveAPatchRelease() {
   source=$(curl --fail --retry 3 -sL \
     "https://raw.githubusercontent.com/bmax121/APatch/$APATCH_VERSION/build.gradle.kts")
   kernelPatchLine=$(grep -E 'project\.ext\.set\("kernelPatchVersion", "[A-Za-z0-9._+-]+"\)' <<< "$source" | head -n1)
-  KERNELPATCH_VERSION=$(sed -E 's/.*"kernelPatchVersion", "([A-Za-z0-9._+-]+)".*/\1/' <<< "$kernelPatchLine")
+  apatchKernelPatchVersion=$(sed -E 's/.*"kernelPatchVersion", "([A-Za-z0-9._+-]+)".*/\1/' <<< "$kernelPatchLine")
+  validateReleaseVersion 'APATCH_KERNELPATCH_VERSION' "$apatchKernelPatchVersion"
+
+  if [[ -z "$KERNELPATCH_VERSION" || "$KERNELPATCH_VERSION" == 'apatch' ]]; then
+    KERNELPATCH_VERSION="$apatchKernelPatchVersion"
+  elif [[ "$KERNELPATCH_VERSION" == 'latest' ]]; then
+    kernelReleaseJson=$(curl --fail --retry 3 -sL \
+      'https://api.github.com/repos/bmax121/KernelPatch/releases/latest')
+    KERNELPATCH_VERSION=$(jq -er '.tag_name' <<< "$kernelReleaseJson")
+  fi
   validateReleaseVersion 'KERNELPATCH_VERSION' "$KERNELPATCH_VERSION"
 
-  kernelReleaseJson=$(curl --fail --retry 3 -sL \
-    "https://api.github.com/repos/bmax121/KernelPatch/releases/tags/$KERNELPATCH_VERSION")
+  if [[ -z "$kernelReleaseJson" ]]; then
+    kernelReleaseJson=$(curl --fail --retry 3 -sL \
+      "https://api.github.com/repos/bmax121/KernelPatch/releases/tags/$KERNELPATCH_VERSION")
+  fi
   kpimgJson=$(githubAssetMetadata "$kernelReleaseJson" 'kpimg-android')
   kptoolsJson=$(githubAssetMetadata "$kernelReleaseJson" 'kptools-linux')
   KERNELPATCH_KPIMG_URL=$(jq -er '.url' <<< "$kpimgJson")
@@ -571,8 +589,7 @@ function patchAPatchBootImage() {
     if grep -Eqi \
       "can'?t find arm64 relocation table|arm64 relocation kernel_va: 0xffffffffffffffff" \
       kptools-patch.log; then
-      printRed 'KernelPatch could not resolve the arm64 relocation table. This signature produced a non-bootable mustang image; refusing to publish it without device validation.'
-      exit 1
+      printRed 'Warning: KernelPatch could not resolve the arm64 relocation table and used its relative-base kallsyms path.'
     fi
 
     # memblock_alloc_try_nid changed from a three-argument physical allocator
