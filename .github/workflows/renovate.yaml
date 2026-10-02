@@ -1,18 +1,37 @@
 name: Renovate
+
 on:
   schedule:
     - cron: '0 20 * * *'
-  
+
   workflow_dispatch:
-  
+    inputs:
+      logLevel:
+        description: Renovate log level
+        required: false
+        default: info
+        type: choice
+        options:
+          - info
+          - debug
+          - trace
+
   # Rebase open PRs on push
   push:
-    branches: [ main ]
-    
+    branches: [main]
+
   pull_request:
     types: [synchronize, opened, reopened]
     paths:
       - .github/workflows/renovate.yaml
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+
 jobs:
   renovate:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -24,8 +43,8 @@ jobs:
         uses: renovatebot/github-action@6d26fcf0275dc65624cbc3d51fe78bc773f98321 # v46.3.6
         with:
           configurationFile: .github/renovate.json5
-          # https://docs.renovatebot.com/modules/platform/github/#running-using-a-fine-grained-token
-          token: ${{ secrets.RENOVATE_TOKEN }}
+          # The action supports GitHub's built-in token for single-repository use.
+          token: ${{ github.token }}
         env:
-            RENOVATE_REPOSITORIES: ${{ github.repository }}
-            LOG_LEVEL: ${{ inputs.logLevel || 'debug' }}
+          RENOVATE_REPOSITORIES: ${{ github.repository }}
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}

@@ -382,9 +382,42 @@ The resulting OTAs are published as a separate flavor, so in Custota you would p
 > ⚠️ By using this flavor you also have to trust the authors of that fork, in addition to everyone listed above.
 Another option [might be](https://github.com/schnatterer/rooted-graphene/pull/73#issuecomment-2666870886) Kitsune magisk.
 
-For a pixincreate-only build whenever GrapheneOS updates, configure the repository variables `OTA_DEVICE_ID` and
-`OTA_MAGISK_PREINIT_DEVICE`, add the signing secrets listed above, and enable the `Automatic pixincreate OTA` workflow.
-It polls every two hours, exits without rebuilding an existing GrapheneOS device/flavor release, and can also be run manually.
+This fork publishes its pixincreate feed at:
+
+`https://david568303.github.io/rooted-graphene/pixincreate`
+
+Use that URL in Custota. The matching initial-install AVB public key is available at
+[`avb_pkmd.bin`](https://david568303.github.io/rooted-graphene/avb_pkmd.bin). All device builds on this server use the same
+signing identity, so always verify that an OTA is for the correct device codename before manually sideloading it.
+
+The `Automatic pixincreate OTAs` workflow checks every two hours and supports every device currently published by GrapheneOS:
+
+| Device | Codename | Magisk pre-init device |
+| --- | --- | --- |
+| Pixel 10a | `stallion` | `sda10` |
+| Pixel 10 Pro Fold | `rango` | `sda10` |
+| Pixel 10 Pro XL | `mustang` | `sda10` |
+| Pixel 10 Pro | `blazer` | `sda10` |
+| Pixel 10 | `frankel` | `sda10` |
+| Pixel 9a | `tegu` | `sda10` |
+| Pixel 9 Pro Fold | `comet` | `sda10` |
+| Pixel 9 Pro XL | `komodo` | `sda10` |
+| Pixel 9 Pro | `caiman` | `sda10` |
+| Pixel 9 | `tokay` | `sda10` |
+| Pixel 8a | `akita` | `sda10` |
+| Pixel 8 Pro | `husky` | `sda10` |
+| Pixel 8 | `shiba` | `sda10` |
+| Pixel Fold | `felix` | `sda8` |
+| Pixel Tablet | `tangorpro` | `sda5` |
+| Pixel 7a | `lynx` | `sda8` |
+| Pixel 7 Pro | `cheetah` | `sda8` |
+| Pixel 7 | `panther` | `sda8` |
+| Pixel 6a | `bluejay` | `sda8` |
+| Pixel 6 Pro | `raven` | `metadata` |
+| Pixel 6 | `oriole` | `metadata` |
+
+The workflow skips device/flavor assets that already exist for the current GrapheneOS security-preview release. Matrix jobs are
+allowed to fail independently so one temporarily unavailable device feed does not cancel updates for every other device.
 
 In general, using [magisk and especially zygisk with Graphene seems to have the risk of breaking things with every new release](https://github.com/chenxiaolong/avbroot/issues/213#issuecomment-1986637884).  
 It's good to have the rootless version as a fallback!
