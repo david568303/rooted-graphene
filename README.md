@@ -382,6 +382,30 @@ The resulting OTAs are published as a separate flavor, so in Custota you would p
 > ⚠️ By using this flavor you also have to trust the authors of that fork, in addition to everyone listed above.
 Another option [might be](https://github.com/schnatterer/rooted-graphene/pull/73#issuecomment-2666870886) Kitsune magisk.
 
+#### APatch flavor
+
+The script can also build a separate `apatch` flavor by setting `SKIP_APATCH=false` (or disabling `skip-apatch` in the
+single-device workflow). `APATCH_VERSION=latest` resolves the latest stable [APatch](https://github.com/bmax121/APatch)
+release and then resolves the exact KernelPatch version used by that APatch release. The matching `kpimg-android` and
+`kptools-linux` artifacts are downloaded from the official [KernelPatch](https://github.com/bmax121/KernelPatch) release;
+every downloaded artifact is checked against the SHA-256 digest published by GitHub.
+
+The original GrapheneOS `boot.img` is extracted from the OTA, patched with KernelPatch, and supplied to avbroot as a
+prepatched image. The build fails if `CONFIG_KALLSYMS=y` is missing or if avbroot rejects the prepatched image as
+incompatible. Current APatch releases use signature authorization for the official manager, so the automated build does
+not create, store, or expose a reusable SuperKey.
+
+After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
+include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after
+the basic APatch boot and root flow has been verified.
+
+Test builds are published under a separate feed and do not replace the production pixincreate feed. For `mustang`, use:
+
+`https://david568303.github.io/rooted-graphene/test/apatch`
+
+Do not lock the bootloader for the first APatch test. Keep a known-good signed OTA available and verify boot, the APatch
+manager, root access, and any required modules first.
+
 This fork publishes its pixincreate feed at:
 
 `https://david568303.github.io/rooted-graphene/pixincreate`

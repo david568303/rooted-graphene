@@ -36,6 +36,9 @@ SKIP_MAGISK=${SKIP_MAGISK:-'false'}
 # Note that modules verifying magisk's signature won't work with this fork.
 # Enable by setting to "false".
 SKIP_PIXINCREATE=${SKIP_PIXINCREATE:-'true'}
+# APatch patches the kernel in boot.img. It is kept as a separate flavor and is
+# disabled by default until explicitly requested.
+SKIP_APATCH=${SKIP_APATCH:-'true'}
 # https://grapheneos.org/releases#stable-channel
 OTA_VERSION=${OTA_VERSION:-'latest'}
 
@@ -55,6 +58,20 @@ PIXINCREATE_APK_NAME=${PIXINCREATE_APK_NAME:-''}
 PIXINCREATE_APK_PATH=''
 PIXINCREATE_APK_URL=''
 PIXINCREATE_APK_SHA256=''
+
+# APatch and its matching KernelPatch tools are resolved from their official
+# GitHub releases. "latest" always means the newest stable APatch release.
+# renovate: datasource=github-releases packageName=bmax121/APatch versioning=loose
+DEFAULT_APATCH_VERSION=11224
+APATCH_VERSION=${APATCH_VERSION:-${DEFAULT_APATCH_VERSION}}
+APATCH_MANAGER_URL=''
+APATCH_MANAGER_SHA256=''
+KERNELPATCH_VERSION=''
+KERNELPATCH_KPIMG_URL=''
+KERNELPATCH_KPIMG_SHA256=''
+KERNELPATCH_KPTOOLS_URL=''
+KERNELPATCH_KPTOOLS_SHA256=''
+APATCH_BOOT_IMAGE=''
 
 SKIP_CLEANUP=${SKIP_CLEANUP:-''}
 
@@ -176,6 +193,14 @@ function checkBuildNecessary() {
   else 
     printGreen "MAGISK_PREINIT_DEVICE not set for device, not creating magisk OTA"
   fi
+
+  if [[ "$SKIP_APATCH" != 'true' ]]; then
+    resolveAPatchRelease
+    # e.g. mustang-2026092501-4647f74-apatch-11224-kp0.13.3-test.zip
+    POTENTIAL_ASSETS['apatch']="${DEVICE_ID}-${OTA_VERSION}-${currentCommit}-apatch-${APATCH_VERSION}-kp${KERNELPATCH_VERSION}$(createAssetSuffix).zip"
+  else
+    printGreen "SKIP_APATCH set, not creating APatch OTA"
+  fi
   
   if [[ "$SKIP_ROOTLESS" != 'true' ]]; then
     POTENTIAL_ASSETS['rootless']="${DEVICE_ID}-${OTA_VERSION}-${currentCommit}-rootless$(createAssetSuffix).zip"
@@ -272,6 +297,10 @@ function downloadAndroidDependencies() {
     downloadPixincreateApk
   fi
 
+  if [[ "${POTENTIAL_ASSETS['apatch']+isset}" ]]; then
+    downloadAPatchDependencies
+  fi
+
   if ! ls ".tmp/$OTA_TARGET.zip" >/dev/null 2>&1; then
     curl --fail -sLo ".tmp/$OTA_TARGET.zip" "$OTA_URL"
   fi
@@ -288,6 +317,12 @@ function findLatestVersion() {
   if [[ -n "$MAGISK_PREINIT_DEVICE" && "$SKIP_PIXINCREATE" != 'true' ]]; then
     resolvePixincreateRelease
     print "Pixincreate version: $PIXINCREATE_VERSION; APK: $PIXINCREATE_APK_NAME"
+  fi
+
+  if [[ "$SKIP_APATCH" != 'true' ]]; then
+    resolveAPatchRelease
+    print "APatch version: $APATCH_VERSION; KernelPatch version: $KERNELPATCH_VERSION"
+    print "Install the matching official APatch manager after flashing: $APATCH_MANAGER_URL"
   fi
 
   # Search for a new version grapheneos.
@@ -393,6 +428,150 @@ function validatePixincreateApkName() {
   fi
 }
 
+function validateReleaseVersion() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "$value" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+    printRed "Invalid $name: $value"
+    exit 1
+  fi
+}
+
+function githubAssetMetadata() {
+  local releaseJson="$1"
+  local assetName="$2"
+  local assetJson digest
+
+  assetJson=$(jq -cer --arg name "$assetName" \
+    '([.assets[] | select(.name == $name)] | first) // error("release asset not found: " + $name)' \
+    <<< "$releaseJson")
+  digest=$(jq -er '.digest' <<< "$assetJson")
+  if [[ "$digest" != sha256:* || ! "${digest#sha256:}" =~ ^[0-9a-f]{64}$ ]]; then
+    printRed "GitHub did not provide a valid SHA-256 digest for $assetName"
+    exit 1
+  fi
+
+  jq -cn \
+    --arg url "$(jq -er '.browser_download_url' <<< "$assetJson")" \
+    --arg sha256 "${digest#sha256:}" \
+    '{url: $url, sha256: $sha256}'
+}
+
+function resolveAPatchRelease() {
+  local endpoint releaseJson managerJson source kernelPatchLine kernelReleaseJson kpimgJson kptoolsJson
+
+  if [[ -n "$KERNELPATCH_VERSION" ]]; then
+    return
+  fi
+
+  if [[ "$APATCH_VERSION" == 'latest' ]]; then
+    endpoint='https://api.github.com/repos/bmax121/APatch/releases/latest'
+  else
+    validateReleaseVersion 'APATCH_VERSION' "$APATCH_VERSION"
+    endpoint="https://api.github.com/repos/bmax121/APatch/releases/tags/$APATCH_VERSION"
+  fi
+
+  releaseJson=$(curl --fail --retry 3 -sL "$endpoint")
+  if [[ "$(jq -er '.draft' <<< "$releaseJson")" != 'false' || "$(jq -er '.prerelease' <<< "$releaseJson")" != 'false' ]]; then
+    printRed "Refusing to use a draft or prerelease APatch release"
+    exit 1
+  fi
+
+  APATCH_VERSION=$(jq -er '.tag_name' <<< "$releaseJson")
+  validateReleaseVersion 'APATCH_VERSION' "$APATCH_VERSION"
+
+  managerJson=$(jq -cer --arg prefix "APatch_${APATCH_VERSION}_" \
+    '([.assets[] | select(.name | startswith($prefix)) | select(.name | endswith("-release-signed.apk"))] | first) // error("official signed APatch manager asset not found")' \
+    <<< "$releaseJson")
+  APATCH_MANAGER_URL=$(jq -er '.browser_download_url' <<< "$managerJson")
+  APATCH_MANAGER_SHA256=$(jq -er '.digest' <<< "$managerJson")
+  APATCH_MANAGER_SHA256=${APATCH_MANAGER_SHA256#sha256:}
+  if [[ ! "$APATCH_MANAGER_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    printRed "GitHub did not provide a valid SHA-256 digest for the APatch manager"
+    exit 1
+  fi
+
+  source=$(curl --fail --retry 3 -sL \
+    "https://raw.githubusercontent.com/bmax121/APatch/$APATCH_VERSION/build.gradle.kts")
+  kernelPatchLine=$(grep -E 'project\.ext\.set\("kernelPatchVersion", "[A-Za-z0-9._+-]+"\)' <<< "$source" | head -n1)
+  KERNELPATCH_VERSION=$(sed -E 's/.*"kernelPatchVersion", "([A-Za-z0-9._+-]+)".*/\1/' <<< "$kernelPatchLine")
+  validateReleaseVersion 'KERNELPATCH_VERSION' "$KERNELPATCH_VERSION"
+
+  kernelReleaseJson=$(curl --fail --retry 3 -sL \
+    "https://api.github.com/repos/bmax121/KernelPatch/releases/tags/$KERNELPATCH_VERSION")
+  kpimgJson=$(githubAssetMetadata "$kernelReleaseJson" 'kpimg-android')
+  kptoolsJson=$(githubAssetMetadata "$kernelReleaseJson" 'kptools-linux')
+  KERNELPATCH_KPIMG_URL=$(jq -er '.url' <<< "$kpimgJson")
+  KERNELPATCH_KPIMG_SHA256=$(jq -er '.sha256' <<< "$kpimgJson")
+  KERNELPATCH_KPTOOLS_URL=$(jq -er '.url' <<< "$kptoolsJson")
+  KERNELPATCH_KPTOOLS_SHA256=$(jq -er '.sha256' <<< "$kptoolsJson")
+}
+
+function downloadVerifiedFile() {
+  local targetFile="$1"
+  local url="$2"
+  local sha256="$3"
+  local downloadFile="${targetFile}.download"
+
+  if [[ -f "$targetFile" ]] && echo "$sha256  $targetFile" | sha256sum --check --status; then
+    return
+  fi
+
+  rm -f "$targetFile" "$downloadFile"
+  curl --fail --retry 3 -sLo "$downloadFile" "$url"
+  echo "$sha256  $downloadFile" | sha256sum --check --status
+  mv "$downloadFile" "$targetFile"
+}
+
+function downloadAPatchDependencies() {
+  resolveAPatchRelease
+  downloadVerifiedFile '.tmp/kpimg-android' "$KERNELPATCH_KPIMG_URL" "$KERNELPATCH_KPIMG_SHA256"
+  downloadVerifiedFile '.tmp/kptools-linux' "$KERNELPATCH_KPTOOLS_URL" "$KERNELPATCH_KPTOOLS_SHA256"
+  chmod +x '.tmp/kptools-linux'
+}
+
+function patchAPatchBootImage() {
+  local workDir=".tmp/apatch-${DEVICE_ID}-${OTA_VERSION}"
+  local extractedDir="$workDir/extracted"
+
+  APATCH_BOOT_IMAGE="$workDir/new-boot.img"
+  if [[ -f "$APATCH_BOOT_IMAGE" ]]; then
+    printGreen "File $APATCH_BOOT_IMAGE already exists locally, not patching it again."
+    return
+  fi
+
+  rm -rf "$workDir"
+  mkdir -p "$workDir"
+  .tmp/avbroot ota extract \
+    --input ".tmp/$OTA_TARGET.zip" \
+    --directory "$extractedDir" \
+    --partition boot
+
+  cp '.tmp/kptools-linux' "$workDir/kptools"
+  cp '.tmp/kpimg-android' "$workDir/kpimg"
+
+  (
+    cd "$workDir"
+    ./kptools unpack 'extracted/boot.img'
+
+    if ! ./kptools -i kernel -f | grep -q 'CONFIG_KALLSYMS=y'; then
+      printRed 'APatch requires CONFIG_KALLSYMS=y, but it was not found in the boot kernel.'
+      exit 1
+    fi
+
+    mv kernel kernel.ori
+    # Omitting -S uses APatch 11219+'s signature-authorized manager mode. This
+    # avoids putting a reusable, root-equivalent SuperKey into CI or the image.
+    ./kptools -p -i kernel.ori -k kpimg -o kernel
+    ./kptools repack 'extracted/boot.img'
+
+    if [[ ! -s new-boot.img ]]; then
+      printRed 'APatch did not produce new-boot.img'
+      exit 1
+    fi
+  )
+}
+
 function downloadAvBroot() {
   downloadAndVerifyFromChenxiaolong 'avbroot' "$AVB_ROOT_VERSION"
 }
@@ -441,6 +620,10 @@ function patchOTAs() {
 
   base642key
 
+  if [[ "${POTENTIAL_ASSETS['apatch']+isset}" ]]; then
+    patchAPatchBootImage
+  fi
+
   for flavor in "${!POTENTIAL_ASSETS[@]}"; do
     local targetFile=".tmp/${POTENTIAL_ASSETS[$flavor]}"
 
@@ -463,6 +646,9 @@ function patchOTAs() {
         resolvePixincreateApk
         args+=("--patch-arg=--magisk" "--patch-arg" "$PIXINCREATE_APK_PATH")
         args+=("--patch-arg=--magisk-preinit-device" "--patch-arg" "$MAGISK_PREINIT_DEVICE")
+      fi
+      if [[ "$flavor" == 'apatch' ]]; then
+        args+=("--patch-arg=--prepatched" "--patch-arg" "$APATCH_BOOT_IMAGE")
       fi
 
       # If env vars not set, passphrases will be queried interactively

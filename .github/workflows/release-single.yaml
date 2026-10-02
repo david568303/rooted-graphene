@@ -24,6 +24,14 @@ on:
         description: skip building the pixincreate Magisk OTA
         type: boolean
         default: true
+      skip-apatch:
+        description: skip building the APatch OTA
+        type: boolean
+        default: true
+      apatch-version:
+        description: APatch version or latest
+        type: string
+        default: ''
       pixincreate-version:
         description: pixincreate Magisk version or latest
         type: string
@@ -83,6 +91,11 @@ on:
         type: boolean
         required: false
         default: true
+      skip-apatch:
+        description: skip building OTA rooted with APatch
+        type: boolean
+        required: false
+        default: true
       upload-test-ota:
         description: Upload OTA to test folder
         required: false
@@ -111,6 +124,9 @@ on:
       pixincreate-apk-name:
         description: optional pixincreate release asset name override
         required: false
+      apatch-version:
+        description: APatch version or latest
+        required: false
 
 permissions:
   contents: write
@@ -132,11 +148,13 @@ jobs:
           MAGISK_VERSION_INPUT: ${{ inputs.magisk-version || '' }}
           PIXINCREATE_VERSION_INPUT: ${{ inputs.pixincreate-version || '' }}
           PIXINCREATE_APK_NAME_INPUT: ${{ inputs.pixincreate-apk-name || '' }}
+          APATCH_VERSION_INPUT: ${{ inputs.apatch-version || '' }}
           OTA_VERSION_INPUT: ${{ inputs.ota-version || '' }}
           SKIP_ROOTED_INPUT: ${{ toJSON(inputs.skip-rooted) == 'true' && 'true' || 'false' }}
           SKIP_ROOTLESS_INPUT: ${{ toJSON(inputs.skip-rootless) == 'true' && 'true' || 'false' }}
           SKIP_MAGISK_INPUT: ${{ toJSON(inputs.skip-magisk) == 'true' && 'true' || 'false' }}
           SKIP_PIXINCREATE_INPUT: ${{ toJSON(inputs.skip-pixincreate) == 'false' && 'false' || 'true' }}
+          SKIP_APATCH_INPUT: ${{ toJSON(inputs.skip-apatch) == 'false' && 'false' || 'true' }}
           FORCE_OTA_SERVER_UPLOAD_INPUT: ${{ toJSON(inputs.force-ota-server-upload) == 'true' && 'true' || 'false' }}
           FORCE_BUILD_INPUT: ${{ toJSON(inputs.force-build) == 'true' && 'true' || 'false' }}
           UPLOAD_TEST_OTA_INPUT: ${{ toJSON(inputs.upload-test-ota) == 'true' && 'true' || 'false' }}
@@ -150,6 +168,7 @@ jobs:
           echo "MAGISK_VERSION=$(echo "$MAGISK_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
           echo "PIXINCREATE_VERSION=$(echo "$PIXINCREATE_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
           echo "PIXINCREATE_APK_NAME=$(echo "$PIXINCREATE_APK_NAME_INPUT" | xargs)" >> "$GITHUB_ENV"
+          echo "APATCH_VERSION=$(echo "$APATCH_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
           echo "OTA_VERSION=$(echo "$OTA_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
           echo "FORCE_OTA_SERVER_UPLOAD=$FORCE_OTA_SERVER_UPLOAD_INPUT" >> "$GITHUB_ENV"
           echo "FORCE_BUILD=$FORCE_BUILD_INPUT" >> "$GITHUB_ENV"
@@ -157,6 +176,7 @@ jobs:
           echo "SKIP_ROOTLESS=$SKIP_ROOTLESS_INPUT" >> "$GITHUB_ENV"
           echo "SKIP_MAGISK=$SKIP_MAGISK_INPUT" >> "$GITHUB_ENV"
           echo "SKIP_PIXINCREATE=$SKIP_PIXINCREATE_INPUT" >> "$GITHUB_ENV"
+          echo "SKIP_APATCH=$SKIP_APATCH_INPUT" >> "$GITHUB_ENV"
           echo "SKIP_RELEASE=$SKIP_RELEASE_INPUT" >> "$GITHUB_ENV"
       - name: Validate signing secrets
         env:
