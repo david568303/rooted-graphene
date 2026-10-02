@@ -571,12 +571,16 @@ function patchAPatchBootImage() {
     if grep -Eqi \
       "can'?t find arm64 relocation table|arm64 relocation kernel_va: 0xffffffffffffffff" \
       kptools-patch.log; then
-      printRed 'KernelPatch could not resolve the arm64 relocation table; refusing to publish a non-bootable APatch image.'
+      printRed 'KernelPatch could not resolve the arm64 relocation table. This signature produced a non-bootable mustang image; refusing to publish it without device validation.'
       exit 1
     fi
 
-    if grep -Eq 'no symbol: (printk|memblock_[[:alnum:]_]*|__cfi_slowpath(_diag)?)' kptools-patch.log; then
-      printRed 'KernelPatch could not resolve kernel symbols required by this APatch patch; refusing to publish the image.'
+    # memblock_alloc_try_nid changed from a three-argument physical allocator
+    # to a five-argument virtual allocator in Linux 4.20. KernelPatch 0.13.3
+    # can select it as the physical fallback and then call it through the old
+    # prototype, which is an early-boot ABI violation (KernelPatch #300/#303).
+    if grep -Fq 'use memblock_alloc_try_nid as map phys alloc' kptools-patch.log; then
+      printRed 'KernelPatch selected the ABI-ambiguous memblock_alloc_try_nid physical fallback; refusing to publish the image.'
       exit 1
     fi
 
