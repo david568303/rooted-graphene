@@ -382,9 +382,9 @@ The resulting OTAs are published as a separate flavor, so in Custota you would p
 > ⚠️ By using this flavor you also have to trust the authors of that fork, in addition to everyone listed above.
 Another option [might be](https://github.com/schnatterer/rooted-graphene/pull/73#issuecomment-2666870886) Kitsune magisk.
 
-For a pixincreate-only build whenever GrapheneOS updates, configure the repository variables `OTA_DEVICE_ID` and
-`OTA_MAGISK_PREINIT_DEVICE`, add the signing secrets listed above, and enable the `Automatic pixincreate OTA` workflow.
-It polls every two hours, exits without rebuilding an existing GrapheneOS device/flavor release, and can also be run manually.
+This fork's `Automatic pixincreate OTA` workflow is configured for `mustang` (Pixel 10 Pro XL) with Magisk preinit device
+`sda10`. It polls every two hours, exits without rebuilding an existing GrapheneOS device/flavor release, and can also be run
+manually. Repository variables `OTA_DEVICE_ID` and `OTA_MAGISK_PREINIT_DEVICE` can override those defaults.
 
 In general, using [magisk and especially zygisk with Graphene seems to have the risk of breaking things with every new release](https://github.com/chenxiaolong/avbroot/issues/213#issuecomment-1986637884).  
 It's good to have the rootless version as a fallback!

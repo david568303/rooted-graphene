@@ -127,7 +127,7 @@ jobs:
       - name: Set inputs
         # Empty means, use version defined in rooted-ota.sh
         env:
-          DEVICE_ID_INPUT: ${{ inputs.device-id || 'shiba' }}
+          DEVICE_ID_INPUT: ${{ inputs.device-id || 'mustang' }}
           MAGISK_PREINIT_DEVICE_INPUT: ${{ inputs.magisk-preinit-device || 'sda10' }}
           MAGISK_VERSION_INPUT: ${{ inputs.magisk-version || '' }}
           PIXINCREATE_VERSION_INPUT: ${{ inputs.pixincreate-version || '' }}
