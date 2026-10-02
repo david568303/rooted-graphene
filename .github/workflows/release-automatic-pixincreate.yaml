@@ -1,59 +1,74 @@
-name: Automatic pixincreate OTA
+name: Automatic pixincreate OTAs
 
 on:
-  # Poll after the usual GrapheneOS release window. The build script exits early
-  # when this device/flavor already exists for the current GrapheneOS version.
+  # Each device job exits before downloading an OTA when that device/flavor is
+  # already present for the current GrapheneOS security-preview release.
   schedule:
     - cron: '17 */2 * * *'
   workflow_dispatch:
-    inputs:
-      device-id:
-        description: GrapheneOS device codename (default mustang)
-        required: false
-        type: string
-      magisk-preinit-device:
-        description: Magisk preinit device (default sda10)
-        required: false
-        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: automatic-pixincreate-ota
+  group: automatic-pixincreate-otas
   cancel-in-progress: false
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      device-id: ${{ steps.config.outputs.device-id }}
-      magisk-preinit-device: ${{ steps.config.outputs.magisk-preinit-device }}
-    steps:
-      - id: config
-        name: Validate device configuration
-        env:
-          DEVICE_ID: ${{ inputs.device-id || vars.OTA_DEVICE_ID || 'mustang' }}
-          MAGISK_PREINIT_DEVICE: ${{ inputs.magisk-preinit-device || vars.OTA_MAGISK_PREINIT_DEVICE || 'sda10' }}
-        run: |
-          if [[ ! "$DEVICE_ID" =~ ^[a-z0-9]+$ ]]; then
-            echo "Invalid GrapheneOS device codename: $DEVICE_ID" >&2
-            exit 1
-          fi
-          if [[ ! "$MAGISK_PREINIT_DEVICE" =~ ^[A-Za-z0-9._-]+$ ]]; then
-            echo "Invalid Magisk preinit device: $MAGISK_PREINIT_DEVICE" >&2
-            exit 1
-          fi
-          echo "device-id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
-          echo "magisk-preinit-device=$MAGISK_PREINIT_DEVICE" >> "$GITHUB_OUTPUT"
-
   release:
-    needs: prepare
+    strategy:
+      fail-fast: false
+      # Limit simultaneous multi-gigabyte downloads and gh-pages pushes.
+      max-parallel: 6
+      matrix:
+        include:
+          - device-id: stallion # Pixel 10a
+            magisk-preinit-device: sda10
+          - device-id: rango # Pixel 10 Pro Fold
+            magisk-preinit-device: sda10
+          - device-id: mustang # Pixel 10 Pro XL
+            magisk-preinit-device: sda10
+          - device-id: blazer # Pixel 10 Pro
+            magisk-preinit-device: sda10
+          - device-id: frankel # Pixel 10
+            magisk-preinit-device: sda10
+          - device-id: tegu # Pixel 9a
+            magisk-preinit-device: sda10
+          - device-id: comet # Pixel 9 Pro Fold
+            magisk-preinit-device: sda10
+          - device-id: komodo # Pixel 9 Pro XL
+            magisk-preinit-device: sda10
+          - device-id: caiman # Pixel 9 Pro
+            magisk-preinit-device: sda10
+          - device-id: tokay # Pixel 9
+            magisk-preinit-device: sda10
+          - device-id: akita # Pixel 8a
+            magisk-preinit-device: sda10
+          - device-id: husky # Pixel 8 Pro
+            magisk-preinit-device: sda10
+          - device-id: shiba # Pixel 8
+            magisk-preinit-device: sda10
+          - device-id: felix # Pixel Fold
+            magisk-preinit-device: sda8
+          - device-id: tangorpro # Pixel Tablet
+            magisk-preinit-device: sda5
+          - device-id: lynx # Pixel 7a
+            magisk-preinit-device: sda8
+          - device-id: cheetah # Pixel 7 Pro
+            magisk-preinit-device: sda8
+          - device-id: panther # Pixel 7
+            magisk-preinit-device: sda8
+          - device-id: bluejay # Pixel 6a
+            magisk-preinit-device: sda8
+          - device-id: raven # Pixel 6 Pro
+            magisk-preinit-device: metadata
+          - device-id: oriole # Pixel 6
+            magisk-preinit-device: metadata
     uses: ./.github/workflows/release-single.yaml
     secrets: inherit
     with:
-      device-id: ${{ needs.prepare.outputs.device-id }}
-      magisk-preinit-device: ${{ needs.prepare.outputs.magisk-preinit-device }}
+      device-id: ${{ matrix.device-id }}
+      magisk-preinit-device: ${{ matrix.magisk-preinit-device }}
       skip-rootless: true
       skip-magisk: true
       skip-pixincreate: false
