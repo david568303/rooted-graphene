@@ -1,0 +1,67 @@
+name: Automatic pixincreate OTA
+
+on:
+  # Poll after the usual GrapheneOS release window. The build script exits early
+  # when this device/flavor already exists for the current GrapheneOS version.
+  schedule:
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+    inputs:
+      device-id:
+        description: GrapheneOS device codename (falls back to OTA_DEVICE_ID)
+        required: false
+        type: string
+      magisk-preinit-device:
+        description: Magisk preinit device (falls back to OTA_MAGISK_PREINIT_DEVICE)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: automatic-pixincreate-ota
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (vars.OTA_DEVICE_ID != '' && vars.OTA_MAGISK_PREINIT_DEVICE != '')
+    runs-on: ubuntu-latest
+    outputs:
+      device-id: ${{ steps.config.outputs.device-id }}
+      magisk-preinit-device: ${{ steps.config.outputs.magisk-preinit-device }}
+    steps:
+      - id: config
+        name: Validate device configuration
+        env:
+          DEVICE_ID: ${{ inputs.device-id || vars.OTA_DEVICE_ID }}
+          MAGISK_PREINIT_DEVICE: ${{ inputs.magisk-preinit-device || vars.OTA_MAGISK_PREINIT_DEVICE }}
+        run: |
+          if [[ -z "$DEVICE_ID" || -z "$MAGISK_PREINIT_DEVICE" ]]; then
+            echo "Set repository variables OTA_DEVICE_ID and OTA_MAGISK_PREINIT_DEVICE before enabling the schedule." >&2
+            exit 1
+          fi
+          if [[ ! "$DEVICE_ID" =~ ^[a-z0-9]+$ ]]; then
+            echo "Invalid GrapheneOS device codename: $DEVICE_ID" >&2
+            exit 1
+          fi
+          if [[ ! "$MAGISK_PREINIT_DEVICE" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Invalid Magisk preinit device: $MAGISK_PREINIT_DEVICE" >&2
+            exit 1
+          fi
+          echo "device-id=$DEVICE_ID" >> "$GITHUB_OUTPUT"
+          echo "magisk-preinit-device=$MAGISK_PREINIT_DEVICE" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: prepare
+    uses: ./.github/workflows/release-single.yaml
+    secrets: inherit
+    with:
+      device-id: ${{ needs.prepare.outputs.device-id }}
+      magisk-preinit-device: ${{ needs.prepare.outputs.magisk-preinit-device }}
+      skip-rootless: true
+      skip-magisk: true
+      skip-pixincreate: false
+      pixincreate-version: latest

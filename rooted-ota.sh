@@ -44,8 +44,17 @@ OTA_VERSION=${OTA_VERSION:-'latest'}
 # Find latest magisk version here: https://github.com/topjohnwu/Magisk/releases, or:
 # curl --fail -sL -I -o /dev/null -w '%{url_effective}' https://github.com/topjohnwu/Magisk/releases/latest | sed 's/.*\/tag\///;'
 # renovate: datasource=github-releases packageName=topjohnwu/Magisk versioning=semver-coerced
-DEFAULT_MAGISK_VERSION=v31.0-3
+DEFAULT_MAGISK_VERSION=v30.7
 MAGISK_VERSION=${MAGISK_VERSION:-${DEFAULT_MAGISK_VERSION}}
+
+# Pixincreate's fork publishes versions and APK names independently from upstream Magisk.
+# renovate: datasource=github-releases packageName=pixincreate/Magisk versioning=loose
+DEFAULT_PIXINCREATE_VERSION=v31.0-3
+PIXINCREATE_VERSION=${PIXINCREATE_VERSION:-${DEFAULT_PIXINCREATE_VERSION}}
+PIXINCREATE_APK_NAME=${PIXINCREATE_APK_NAME:-''}
+PIXINCREATE_APK_PATH=''
+PIXINCREATE_APK_URL=''
+PIXINCREATE_APK_SHA256=''
 
 SKIP_CLEANUP=${SKIP_CLEANUP:-''}
 
@@ -158,8 +167,9 @@ function checkBuildNecessary() {
     fi
 
     if [[ "$SKIP_PIXINCREATE" != 'true' ]]; then
-      # e.g. oriole-2023121200-pixincreate-v30.7-4647f74-dirty.zip
-      POTENTIAL_ASSETS['pixincreate']="${DEVICE_ID}-${OTA_VERSION}-${currentCommit}-pixincreate-${MAGISK_VERSION}$(createAssetSuffix).zip"
+      resolvePixincreateApk
+      # e.g. oriole-2023121200-pixincreate-v31.0-3-4647f74-dirty.zip
+      POTENTIAL_ASSETS['pixincreate']="${DEVICE_ID}-${OTA_VERSION}-${currentCommit}-pixincreate-${PIXINCREATE_VERSION}$(createAssetSuffix).zip"
     else
       printGreen "SKIP_PIXINCREATE set, not creating pixincreate OTA"
     fi
@@ -257,10 +267,9 @@ function downloadAndroidDependencies() {
     curl --fail -sLo ".tmp/magisk-$MAGISK_VERSION.apk" "https://github.com/topjohnwu/Magisk/releases/download/$MAGISK_VERSION/Magisk-$MAGISK_VERSION.apk"
   fi
 
-  # pixincreate's Magisk fork
-  if ! ls ".tmp/pixincreate-$MAGISK_VERSION.apk" >/dev/null 2>&1 && [[ "${POTENTIAL_ASSETS['pixincreate']+isset}" ]]; then
-    curl --fail -sLo ".tmp/pixincreate-$MAGISK_VERSION.apk" \
-      "https://github.com/pixincreate/Magisk/releases/download/$MAGISK_VERSION/Magisk-$MAGISK_VERSION.apk"
+  if [[ "${POTENTIAL_ASSETS['pixincreate']+isset}" ]]; then
+    checkMandatoryVariable 'PIXINCREATE_VERSION'
+    downloadPixincreateApk
   fi
 
   if ! ls ".tmp/$OTA_TARGET.zip" >/dev/null 2>&1; then
@@ -276,6 +285,11 @@ function findLatestVersion() {
   fi
   print "Magisk version: $MAGISK_VERSION"
 
+  if [[ -n "$MAGISK_PREINIT_DEVICE" && "$SKIP_PIXINCREATE" != 'true' ]]; then
+    resolvePixincreateRelease
+    print "Pixincreate version: $PIXINCREATE_VERSION; APK: $PIXINCREATE_APK_NAME"
+  fi
+
   # Search for a new version grapheneos.
   # e.g. https://releases.grapheneos.org/shiba-stable
 
@@ -287,6 +301,96 @@ function findLatestVersion() {
   OTA_URL="$OTA_BASE_URL/$OTA_TARGET.zip"
   # e.g.  shiba-ota_update-2023121200
   print "OTA target: $OTA_TARGET; OTA URL: $OTA_URL"
+}
+
+function downloadPixincreateApk() {
+  resolvePixincreateApk
+  local targetFile="$PIXINCREATE_APK_PATH"
+  local downloadFile="$targetFile.download"
+
+  if [[ -f "$targetFile" ]]; then
+    if echo "$PIXINCREATE_APK_SHA256  $targetFile" | sha256sum --check --status; then
+      return
+    fi
+    printRed "Cached pixincreate APK failed SHA-256 verification; downloading it again"
+    rm -f "$targetFile"
+  fi
+
+  rm -f "$downloadFile"
+  curl --fail --retry 3 -sLo "$downloadFile" "$PIXINCREATE_APK_URL"
+  echo "$PIXINCREATE_APK_SHA256  $downloadFile" | sha256sum --check --status
+  mv "$downloadFile" "$targetFile"
+}
+
+function resolvePixincreateRelease() {
+  local endpoint releaseJson assetJson digest preferredApkName requestedApkName
+  checkMandatoryVariable 'PIXINCREATE_VERSION'
+
+  requestedApkName="$PIXINCREATE_APK_NAME"
+  if [[ "$PIXINCREATE_VERSION" == 'latest' ]]; then
+    endpoint='https://api.github.com/repos/pixincreate/Magisk/releases/latest'
+  else
+    validatePixincreateVersion
+    endpoint="https://api.github.com/repos/pixincreate/Magisk/releases/tags/$PIXINCREATE_VERSION"
+  fi
+
+  releaseJson=$(curl --fail --retry 3 -sL "$endpoint")
+  if [[ "$(jq -er '.draft' <<< "$releaseJson")" != 'false' ]]; then
+    printRed "Refusing to use a draft pixincreate release"
+    exit 1
+  fi
+
+  PIXINCREATE_VERSION=$(jq -er '.tag_name' <<< "$releaseJson")
+  validatePixincreateVersion
+  preferredApkName="Magisk-$PIXINCREATE_VERSION.apk"
+
+  if [[ -n "$requestedApkName" ]]; then
+    PIXINCREATE_APK_NAME="$requestedApkName"
+    validatePixincreateApkName
+    assetJson=$(jq -cer --arg name "$PIXINCREATE_APK_NAME" \
+      '([.assets[] | select(.name == $name)] | first) // error("requested APK asset not found")' \
+      <<< "$releaseJson")
+  else
+    assetJson=$(jq -cer --arg preferred "$preferredApkName" \
+      '([.assets[] | select(.name == $preferred)] + [.assets[] | select(.name == "app-release.apk")] | first) // error("no supported APK asset found")' \
+      <<< "$releaseJson")
+    PIXINCREATE_APK_NAME=$(jq -er '.name' <<< "$assetJson")
+    validatePixincreateApkName
+  fi
+
+  PIXINCREATE_APK_URL=$(jq -er '.browser_download_url' <<< "$assetJson")
+  digest=$(jq -er '.digest' <<< "$assetJson")
+  if [[ "$digest" != sha256:* ]]; then
+    printRed "GitHub did not provide a SHA-256 digest for $PIXINCREATE_APK_NAME"
+    exit 1
+  fi
+  PIXINCREATE_APK_SHA256=${digest#sha256:}
+  if [[ ! "$PIXINCREATE_APK_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    printRed "Invalid SHA-256 digest for $PIXINCREATE_APK_NAME"
+    exit 1
+  fi
+}
+
+function resolvePixincreateApk() {
+  if [[ -z "$PIXINCREATE_APK_URL" || -z "$PIXINCREATE_APK_SHA256" || -z "$PIXINCREATE_APK_NAME" ]]; then
+    resolvePixincreateRelease
+  fi
+  validatePixincreateVersion
+  PIXINCREATE_APK_PATH=".tmp/pixincreate-$PIXINCREATE_VERSION-$PIXINCREATE_APK_NAME"
+}
+
+function validatePixincreateVersion() {
+  if [[ ! "$PIXINCREATE_VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+    printRed "Invalid PIXINCREATE_VERSION: $PIXINCREATE_VERSION"
+    exit 1
+  fi
+}
+
+function validatePixincreateApkName() {
+  if [[ "$PIXINCREATE_APK_NAME" == */* || "$PIXINCREATE_APK_NAME" == '.' || "$PIXINCREATE_APK_NAME" == '..' ]]; then
+    printRed "PIXINCREATE_APK_NAME must be a release asset file name, not a path: $PIXINCREATE_APK_NAME"
+    exit 1
+  fi
 }
 
 function downloadAvBroot() {
@@ -344,6 +448,7 @@ function patchOTAs() {
       printGreen "File $targetFile already exists locally, not patching."
     else
       local args=()
+      local dockerEnvArgs=()
 
       args+=("--output" "$targetFile")
       args+=("--input" ".tmp/$OTA_TARGET.zip")
@@ -355,17 +460,22 @@ function patchOTAs() {
         args+=("--patch-arg=--magisk-preinit-device" "--patch-arg" "$MAGISK_PREINIT_DEVICE")
       fi
       if [[ "$flavor" == 'pixincreate' ]]; then
-        args+=("--patch-arg=--magisk" "--patch-arg" ".tmp/pixincreate-$MAGISK_VERSION.apk")
+        resolvePixincreateApk
+        args+=("--patch-arg=--magisk" "--patch-arg" "$PIXINCREATE_APK_PATH")
         args+=("--patch-arg=--magisk-preinit-device" "--patch-arg" "$MAGISK_PREINIT_DEVICE")
       fi
 
       # If env vars not set, passphrases will be queried interactively
       if [ -v PASSPHRASE_AVB ]; then
         args+=("--pass-avb-env-var" "PASSPHRASE_AVB")
+        export PASSPHRASE_AVB
+        dockerEnvArgs+=("--env" "PASSPHRASE_AVB")
       fi
 
       if [ -v PASSPHRASE_OTA ]; then
         args+=("--pass-ota-env-var" "PASSPHRASE_OTA")
+        export PASSPHRASE_OTA
+        dockerEnvArgs+=("--env" "PASSPHRASE_OTA")
       fi
 
       if [[ "${SKIP_MODULES}" != 'true' ]]; then
@@ -378,12 +488,11 @@ function patchOTAs() {
       # We need to add .tmp to PATH, but we can't use $PATH: because this would be the PATH of the host not the container
       # Python image is designed to run as root, so chown the files it creates back at the end
       # ... room for improvement 😐️
-      # shellcheck disable=SC2046
       docker run --rm -i $(tty &>/dev/null && echo '-t') \
     -v "$PWD:/app" \
     -w /app \
     -e PATH='/bin:/usr/local/bin:/sbin:/usr/bin:/app/.tmp' \
-    --env-file <(env) \
+    "${dockerEnvArgs[@]}" \
     python:${PYTHON_VERSION} sh -c "set -e && \
         apk add --no-cache openssh uv && \
         uv sync --locked --project .tmp/my-avbroot-setup && \

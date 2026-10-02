@@ -371,7 +371,9 @@ This still has some limitations, like [certain modules checking for magisk's sig
 This variant can be built as an additional `pixincreate` flavor, next to the regular `magisk` and `rootless` ones.  
 It is disabled by default, so it is never silently forced on existing users. Enable it by setting `SKIP_PIXINCREATE=false`
 (or the `skip-pixincreate` input in `release-single.yaml`). It requires `MAGISK_PREINIT_DEVICE` to be set, just like the regular magisk flavor,
-and it reuses `MAGISK_VERSION`, since the fork uses the same tags as upstream magisk.
+and uses `PIXINCREATE_VERSION`, independently from the regular `MAGISK_VERSION` used by upstream Magisk.
+`PIXINCREATE_VERSION=latest` resolves the newest stable GitHub release once per build. The release asset and its GitHub-provided SHA-256 digest
+are both verified before patching. `PIXINCREATE_APK_NAME` can override the release asset name when a release uses a nonstandard name.
 If you only want the `pixincreate` flavor, you can additionally set `SKIP_MAGISK=true`.
 
 The resulting OTAs are published as a separate flavor, so in Custota you would point to the `pixincreate` path of your OTA server, e.g.
@@ -379,6 +381,10 @@ The resulting OTAs are published as a separate flavor, so in Custota you would p
 
 > ⚠️ By using this flavor you also have to trust the authors of that fork, in addition to everyone listed above.
 Another option [might be](https://github.com/schnatterer/rooted-graphene/pull/73#issuecomment-2666870886) Kitsune magisk.
+
+For a pixincreate-only build whenever GrapheneOS updates, configure the repository variables `OTA_DEVICE_ID` and
+`OTA_MAGISK_PREINIT_DEVICE`, add the signing secrets listed above, and enable the `Automatic pixincreate OTA` workflow.
+It polls every two hours, exits without rebuilding an existing GrapheneOS device/flavor release, and can also be run manually.
 
 In general, using [magisk and especially zygisk with Graphene seems to have the risk of breaking things with every new release](https://github.com/chenxiaolong/avbroot/issues/213#issuecomment-1986637884).  
 It's good to have the rootless version as a fallback!

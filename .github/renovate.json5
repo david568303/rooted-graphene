@@ -17,6 +17,11 @@
       matchUpdateTypes: ["minor", "patch" ],
       automerge: true,
     },
+    {
+      matchPackageNames: ["pixincreate/Magisk"],
+      description: "Require review for third-party root package updates",
+      automerge: false,
+    },
   ],
   customManagers: [
     {
