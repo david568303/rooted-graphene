@@ -363,6 +363,19 @@ function downloadPixincreateApk() {
   mv "$downloadFile" "$targetFile"
 }
 
+function githubApiGet() {
+  local url="$1"
+  local params=(--fail --retry 3 --retry-all-errors -sL \
+    -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2022-11-28')
+
+  if [[ -n "$GITHUB_TOKEN" ]]; then
+    params+=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  fi
+
+  curl "${params[@]}" "$url"
+}
+
 function resolvePixincreateRelease() {
   local endpoint releaseJson assetJson digest preferredApkName requestedApkName
   checkMandatoryVariable 'PIXINCREATE_VERSION'
@@ -375,7 +388,7 @@ function resolvePixincreateRelease() {
     endpoint="https://api.github.com/repos/pixincreate/Magisk/releases/tags/$PIXINCREATE_VERSION"
   fi
 
-  releaseJson=$(curl --fail --retry 3 -sL "$endpoint")
+  releaseJson=$(githubApiGet "$endpoint")
   if [[ "$(jq -er '.draft' <<< "$releaseJson")" != 'false' ]]; then
     printRed "Refusing to use a draft pixincreate release"
     exit 1
@@ -478,7 +491,7 @@ function resolveAPatchRelease() {
     endpoint="https://api.github.com/repos/bmax121/APatch/releases/tags/$APATCH_VERSION"
   fi
 
-  releaseJson=$(curl --fail --retry 3 -sL "$endpoint")
+  releaseJson=$(githubApiGet "$endpoint")
   if [[ "$(jq -er '.draft' <<< "$releaseJson")" != 'false' || "$(jq -er '.prerelease' <<< "$releaseJson")" != 'false' ]]; then
     printRed "Refusing to use a draft or prerelease APatch release"
     exit 1
@@ -507,14 +520,14 @@ function resolveAPatchRelease() {
   if [[ -z "$KERNELPATCH_VERSION" || "$KERNELPATCH_VERSION" == 'apatch' ]]; then
     KERNELPATCH_VERSION="$apatchKernelPatchVersion"
   elif [[ "$KERNELPATCH_VERSION" == 'latest' ]]; then
-    kernelReleaseJson=$(curl --fail --retry 3 -sL \
+    kernelReleaseJson=$(githubApiGet \
       'https://api.github.com/repos/bmax121/KernelPatch/releases/latest')
     KERNELPATCH_VERSION=$(jq -er '.tag_name' <<< "$kernelReleaseJson")
   fi
   validateReleaseVersion 'KERNELPATCH_VERSION' "$KERNELPATCH_VERSION"
 
   if [[ -z "$kernelReleaseJson" ]]; then
-    kernelReleaseJson=$(curl --fail --retry 3 -sL \
+    kernelReleaseJson=$(githubApiGet \
       "https://api.github.com/repos/bmax121/KernelPatch/releases/tags/$KERNELPATCH_VERSION")
   fi
   kpimgJson=$(githubAssetMetadata "$kernelReleaseJson" 'kpimg-android')
