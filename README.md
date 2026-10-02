@@ -392,8 +392,9 @@ every downloaded artifact is checked against the SHA-256 digest published by Git
 
 The original GrapheneOS `boot.img` is extracted from the OTA, patched with KernelPatch, and supplied to avbroot as a
 prepatched image. The build fails if `CONFIG_KALLSYMS=y` is missing or if avbroot rejects the prepatched image as
-incompatible. Current APatch releases use signature authorization for the official manager, so the automated build does
-not create, store, or expose a reusable SuperKey.
+incompatible. Before upload, the final signed OTA is re-extracted and KernelPatch must report `patched=true` for its boot
+kernel. Current APatch releases use signature authorization for the official manager, so the automated build does not
+create, store, or expose a reusable SuperKey.
 
 After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
 include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after

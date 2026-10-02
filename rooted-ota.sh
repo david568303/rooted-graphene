@@ -572,6 +572,30 @@ function patchAPatchBootImage() {
   )
 }
 
+function verifyAPatchOta() {
+  local otaFile="$1"
+  local verifyDir=".tmp/apatch-verify-${DEVICE_ID}-${OTA_VERSION}"
+
+  rm -rf "$verifyDir"
+  mkdir -p "$verifyDir"
+  .tmp/avbroot ota extract \
+    --input "$otaFile" \
+    --directory "$verifyDir/extracted" \
+    --partition boot
+  cp '.tmp/kptools-linux' "$verifyDir/kptools"
+
+  (
+    cd "$verifyDir"
+    ./kptools unpack 'extracted/boot.img'
+    if ! ./kptools -i kernel -l | grep -q 'patched=true'; then
+      printRed 'Final OTA verification failed: boot kernel is not patched with KernelPatch.'
+      exit 1
+    fi
+  )
+
+  printGreen "Verified APatch in final OTA boot image: $otaFile"
+}
+
 function downloadAvBroot() {
   downloadAndVerifyFromChenxiaolong 'avbroot' "$AVB_ROOT_VERSION"
 }
@@ -685,6 +709,10 @@ function patchOTAs() {
         uv run --project .tmp/my-avbroot-setup \
             .tmp/my-avbroot-setup/patch.py ${args[*]} && \
         chown -R $(id -u):$(id -g) .tmp"
+
+      if [[ "$flavor" == 'apatch' ]]; then
+        verifyAPatchOta "$targetFile"
+      fi
 
       printGreen "Finished patching file ${targetFile}"
     fi
