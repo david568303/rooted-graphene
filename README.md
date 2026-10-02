@@ -387,7 +387,8 @@ Another option [might be](https://github.com/schnatterer/rooted-graphene/pull/73
 The script can also build a separate `apatch` flavor by setting `SKIP_APATCH=false` (or disabling `skip-apatch` in the
 single-device workflow). `APATCH_VERSION=latest` resolves the latest stable [APatch](https://github.com/bmax121/APatch)
 release. KernelPatch is independently pinned by `KERNELPATCH_VERSION` because APatch 11224's older pinned KernelPatch
-0.13.3 does not boot on `mustang`; KernelPatch 0.13.9 was verified there with a nonpersistent `fastboot boot` test. Set
+0.13.3 does not boot on `mustang`. KernelPatch 0.13.9 passed a nonpersistent `fastboot boot` test there, but still
+bootlooped after a verified persistent installation. Set
 `KERNELPATCH_VERSION=apatch` to use the version pinned by APatch itself, or `latest` to resolve the latest stable
 [KernelPatch](https://github.com/bmax121/KernelPatch) release. The matching `kpimg-android` and `kptools-linux` artifacts
 are downloaded from the official KernelPatch release, and every artifact is checked against GitHub's published SHA-256
@@ -402,20 +403,16 @@ signed OTA is re-extracted and KernelPatch must report `patched=true` for its bo
 signature authorization for the official manager, so the automated build does not create, store, or expose a reusable
 SuperKey.
 
-APatch 11224 / KernelPatch 0.13.3 cannot patch the Android 17 kernel shipped for `mustang`: the resulting image was
-confirmed not to boot. KernelPatch 0.13.9 fixes the observed boot failure and is the default for APatch builds in this
-fork. This does not affect the Magisk or pixincreate flavors.
+APatch is currently blocked for `mustang`. Both KernelPatch 0.13.3 and 0.13.9 bootloop when flashed persistently, even
+though 0.13.9 can boot nonpersistently with `fastboot boot`. Automated builds fail closed until a flashed image passes
+hardware validation. This does not affect the Magisk or pixincreate flavors.
 
 After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
 include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after
 the basic APatch boot and root flow has been verified.
 
-Test builds are published under a separate feed and do not replace the production pixincreate feed. For `mustang`, use:
-
-`https://david568303.github.io/rooted-graphene/test/apatch`
-
-Do not lock the bootloader for the first APatch test. Keep a known-good signed OTA available and verify boot, the APatch
-manager, root access, and any required modules first.
+APatch test builds must remain outside production feeds. Do not lock the bootloader for an APatch test. Keep a known-good
+signed OTA available and verify persistent boot, recovery, the APatch manager, root access, and required modules first.
 
 This fork publishes its pixincreate feed at:
 

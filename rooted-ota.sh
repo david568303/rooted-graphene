@@ -39,6 +39,11 @@ SKIP_PIXINCREATE=${SKIP_PIXINCREATE:-'true'}
 # APatch patches the kernel in boot.img. It is kept as a separate flavor and is
 # disabled by default until explicitly requested.
 SKIP_APATCH=${SKIP_APATCH:-'true'}
+# A RAM-booted KernelPatch image is not enough to establish that a flashed,
+# verified image works. mustang remains blocked after both 0.13.3 and 0.13.9
+# bootlooped when installed persistently. This escape hatch is intentionally
+# not exposed by the GitHub workflows.
+ALLOW_UNVERIFIED_APATCH=${ALLOW_UNVERIFIED_APATCH:-'false'}
 # https://grapheneos.org/releases#stable-channel
 OTA_VERSION=${OTA_VERSION:-'latest'}
 
@@ -564,6 +569,11 @@ function downloadAPatchDependencies() {
 function patchAPatchBootImage() {
   local workDir=".tmp/apatch-${DEVICE_ID}-${OTA_VERSION}"
   local extractedDir="$workDir/extracted"
+
+  if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' ]]; then
+    printRed 'APatch is blocked for mustang: KernelPatch 0.13.3 and 0.13.9 bootloop when flashed persistently.'
+    exit 1
+  fi
 
   APATCH_BOOT_IMAGE="$workDir/new-boot.img"
   if [[ -f "$APATCH_BOOT_IMAGE" ]]; then
