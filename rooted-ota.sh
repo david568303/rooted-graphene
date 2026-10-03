@@ -44,6 +44,11 @@ SKIP_APATCH=${SKIP_APATCH:-'true'}
 # bootlooped when installed persistently. This escape hatch is intentionally
 # not exposed by the GitHub workflows.
 ALLOW_UNVERIFIED_APATCH=${ALLOW_UNVERIFIED_APATCH:-'false'}
+# APatch OTAs are never published (no release assets, no OTA feed, test feed
+# included) while the KernelPatch bootloop is unresolved. APatch can still be
+# built with SKIP_RELEASE. This escape hatch is intentionally not exposed by
+# the GitHub workflows.
+ALLOW_APATCH_RELEASE=${ALLOW_APATCH_RELEASE:-'false'}
 # https://grapheneos.org/releases#stable-channel
 OTA_VERSION=${OTA_VERSION:-'latest'}
 
@@ -78,9 +83,9 @@ APATCH_MANAGER_SHA256=''
 # renovate: datasource=github-releases packageName=bmax121/KernelPatch versioning=loose
 DEFAULT_KERNELPATCH_VERSION=0.13.9
 KERNELPATCH_VERSION=${KERNELPATCH_VERSION:-${DEFAULT_KERNELPATCH_VERSION}}
-# Optional immutable source commit. When set, kptools still comes from the
-# selected stable release, while kpimg is built from this exact
-# commit. This is intended for fixes merged after the latest release.
+# Optional immutable source commit in KERNELPATCH_SOURCE_REPO. When set, kpimg
+# and kptools are both built from this exact commit. This is intended for
+# fixes not contained in the latest release.
 KERNELPATCH_COMMIT=${KERNELPATCH_COMMIT:-''}
 KERNELPATCH_DISPLAY_VERSION=''
 KERNELPATCH_KPIMG_URL=''
@@ -89,12 +94,15 @@ KERNELPATCH_KPTOOLS_URL=''
 KERNELPATCH_KPTOOLS_SHA256=''
 APATCH_BOOT_IMAGE=''
 
-KERNELPATCH_SOURCE_REPO='https://github.com/bmax121/KernelPatch.git'
+# Fork of bmax121/KernelPatch carrying fixes not yet upstream.
+KERNELPATCH_SOURCE_REPO=${KERNELPATCH_SOURCE_REPO:-'https://github.com/david568303/KernelPatch.git'}
 KERNELPATCH_TOOLCHAIN_URL='https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz'
 KERNELPATCH_TOOLCHAIN_SHA256='62d66e0ad7bd7f2a183d236ee301a5c73c737c886c7944aa4f39415aab528daf'
-# First upstream main commit containing the GrapheneOS arm64 inlined-kCFI
-# fix (#311), plus the later boot-image padding fix (#316).
-MUSTANG_KERNELPATCH_TEST_COMMIT='a308d889c6eadcd01f4503615dee0b2f41e2eb62'
+# fix/arm64-image-size in the fork: upstream a308d88 (GrapheneOS arm64
+# inlined-kCFI fix #311, boot-image padding fix #316) plus a kptools fix that
+# keeps the bootloader from placing the ramdisk/DTB where KernelPatch copies
+# its start image. Without it the copy corrupted the initramfs in QEMU.
+MUSTANG_KERNELPATCH_TEST_COMMIT='c028e95aa7550ce5a91916cf60796b4c5f5a41f8'
 
 SKIP_CLEANUP=${SKIP_CLEANUP:-''}
 
@@ -170,6 +178,12 @@ function key2base64() {
 }
 
 function createAndReleaseRootedOta() {
+  if [[ "$SKIP_APATCH" != 'true' && "$ALLOW_APATCH_RELEASE" != 'true' ]]; then
+    printRed 'APatch OTAs are not published while the KernelPatch bootloop is unresolved.'
+    printRed 'Set SKIP_APATCH=true to release the other flavors, or SKIP_RELEASE to build APatch without publishing.'
+    exit 1
+  fi
+
   createRootedOta
   releaseOta
 
@@ -583,17 +597,17 @@ function downloadVerifiedFile() {
 
 function downloadAPatchDependencies() {
   resolveAPatchRelease
-  downloadVerifiedFile '.tmp/kptools-linux' "$KERNELPATCH_KPTOOLS_URL" "$KERNELPATCH_KPTOOLS_SHA256"
-  chmod +x '.tmp/kptools-linux'
 
   if [[ -n "$KERNELPATCH_COMMIT" ]]; then
-    buildPinnedKernelPatchImage
+    buildPinnedKernelPatch
   else
+    downloadVerifiedFile '.tmp/kptools-linux' "$KERNELPATCH_KPTOOLS_URL" "$KERNELPATCH_KPTOOLS_SHA256"
+    chmod +x '.tmp/kptools-linux'
     downloadVerifiedFile '.tmp/kpimg-android' "$KERNELPATCH_KPIMG_URL" "$KERNELPATCH_KPIMG_SHA256"
   fi
 }
 
-function buildPinnedKernelPatchImage() {
+function buildPinnedKernelPatch() {
   local sourceDir='.tmp/kernelpatch-source'
   local toolchainArchive='.tmp/kernelpatch-aarch64-toolchain.tar.xz'
   local toolchainDir='.tmp/kernelpatch-toolchain'
@@ -622,13 +636,52 @@ function buildPinnedKernelPatchImage() {
     exit 1
   fi
   print "Built KernelPatch kpimg from commit $KERNELPATCH_COMMIT ($(sha256sum '.tmp/kpimg-android' | awk '{print $1}'))"
+
+  # kptools must come from the same patched source: some fixes are in the
+  # patch tool, not in kpimg.
+  ANDROID=1 cmake -S "$sourceDir/tools" -B "$sourceDir/tools/build" -DCMAKE_BUILD_TYPE=Release
+  ANDROID=1 cmake --build "$sourceDir/tools/build" -j "$(nproc)"
+  cp "$sourceDir/tools/build/kptools" '.tmp/kptools-linux'
+  chmod +x '.tmp/kptools-linux'
+  print "Built KernelPatch kptools from commit $KERNELPATCH_COMMIT ($(sha256sum '.tmp/kptools-linux' | awk '{print $1}'))"
+}
+
+# Builds only the KernelPatch-patched boot.img for hardware testing, without
+# signing keys, avbroot OTA patching or any release. Flash it with
+# `fastboot flash boot` on stock GrapheneOS of the same OTA_VERSION with an
+# unlocked bootloader.
+function createAPatchTestBootImage() {
+  SKIP_APATCH='false'
+  APATCH_BOOT_TEST='true'
+  if [[ -z "$KERNELPATCH_COMMIT" && "$DEVICE_ID" == 'mustang' ]]; then
+    KERNELPATCH_COMMIT="$MUSTANG_KERNELPATCH_TEST_COMMIT"
+  fi
+
+  findLatestVersion
+  mkdir -p .tmp
+  downloadAPatchDependencies
+  if ! ls ".tmp/$OTA_TARGET.zip" >/dev/null 2>&1; then
+    curl --fail -sLo ".tmp/$OTA_TARGET.zip" "$OTA_URL"
+  fi
+  downloadAvBroot
+  patchAPatchBootImage
+
+  local outDir='.tmp/apatch-test'
+  local name="${DEVICE_ID}-${OTA_VERSION}-apatch-boot-kp${KERNELPATCH_DISPLAY_VERSION}"
+  local workDir=".tmp/apatch-${DEVICE_ID}-${OTA_VERSION}"
+  mkdir -p "$outDir"
+  cp "$APATCH_BOOT_IMAGE" "$outDir/$name.img"
+  cp "$workDir/extracted/boot.img" "$outDir/${DEVICE_ID}-${OTA_VERSION}-stock-boot.img"
+  cp "$workDir/kptools-patch.log" "$outDir/$name.log"
+  (cd "$outDir" && sha256sum ./*.img > SHA256SUMS)
+  printGreen "APatch test boot image: $outDir/$name.img"
 }
 
 function patchAPatchBootImage() {
   local workDir=".tmp/apatch-${DEVICE_ID}-${OTA_VERSION}"
   local extractedDir="$workDir/extracted"
 
-  if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' ]]; then
+  if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' && "${APATCH_BOOT_TEST:-}" != 'true' ]]; then
     if [[ "$UPLOAD_TEST_OTA" != 'true' || "$KERNELPATCH_COMMIT" != "$MUSTANG_KERNELPATCH_TEST_COMMIT" ]]; then
       printRed 'APatch production builds are blocked for mustang: released KernelPatch 0.13.3 and 0.13.9 bootloop.'
       printRed 'Only the pinned post-0.13.9 candidate may be published to the isolated test feed before hardware validation.'

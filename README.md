@@ -403,15 +403,35 @@ signed OTA is re-extracted and KernelPatch must report `patched=true` for its bo
 signature authorization for the official manager, so the automated build does not create, store, or expose a reusable
 SuperKey.
 
+APatch OTAs are currently never published: no release assets and no OTA feed entries, including the test feed. A run
+that would release with `SKIP_APATCH=false` fails before building; use `SKIP_RELEASE=true` (`skip-release` in the
+workflow) to build APatch without publishing. The automatic workflow never builds APatch.
+
 APatch is currently blocked for `mustang`. Both KernelPatch 0.13.3 and 0.13.9 bootloop when flashed persistently, even
 though 0.13.9 can boot nonpersistently with `fastboot boot`. Automated builds fail closed until a flashed image passes
 hardware validation. This does not affect the Magisk or pixincreate flavors.
 
-For isolated testing, `KERNELPATCH_COMMIT=a308d889c6eadcd01f4503615dee0b2f41e2eb62` builds the payload from the exact
-post-0.13.9 upstream commit containing the GrapheneOS inlined-kCFI fix while retaining the released 0.13.9 `kptools`.
-The compiler archive, source commit, APatch manager, and released patch tool are all pinned or digest-verified. Mustang
-accepts this candidate only when `UPLOAD_TEST_OTA=true`; it cannot enter the production OTA feed until the boot, APatch
-root, recovery, OTA, and Zygisk checks have passed on hardware.
+For isolated testing, `KERNELPATCH_COMMIT=c028e95aa7550ce5a91916cf60796b4c5f5a41f8` builds both `kpimg` and `kptools`
+from the [`fix/arm64-image-size`](https://github.com/david568303/KernelPatch/tree/fix/arm64-image-size) branch of the
+KernelPatch fork: upstream `a308d88` (GrapheneOS inlined-kCFI fix) plus a fix for the suspected flashed-only bootloop.
+The compiler archive, source commit, and APatch manager are all pinned or digest-verified.
+
+KernelPatch copies its start image to just past the kernel's declared arm64 `image_size`, which the boot protocol does
+not reserve, so a bootloader may have put the ramdisk or DTB there. In QEMU with the mustang kernel and the initramfs
+placed directly after `image_size`, unfixed KernelPatch corrupted the initramfs and panicked, while the fix (which grows
+`image_size` over that region) booted. Whether the Pixel bootloader places data there is not yet confirmed on hardware.
+
+To test it without the full avbroot flow, run the **APatch boot image test** workflow. It produces a workflow artifact
+(nothing is released) with the patched `boot.img`, the matching stock `boot.img`, and the `kptools` log. On a device
+running stock GrapheneOS of exactly that `ota-version`, with the bootloader unlocked:
+
+```shell
+fastboot flash boot mustang-<version>-apatch-boot-kp<...>.img   # test
+fastboot flash boot mustang-<version>-stock-boot.img            # revert
+```
+
+If it does not boot, revert, boot normally, and capture `adb bugreport`: its last kmsg (`console-ramoops`) section
+holds the kernel log of the failed boot.
 
 After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
 include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after
