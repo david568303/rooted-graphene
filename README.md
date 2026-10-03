@@ -411,7 +411,7 @@ APatch is currently blocked for `mustang`. Both KernelPatch 0.13.3 and 0.13.9 bo
 though 0.13.9 can boot nonpersistently with `fastboot boot`. Automated builds fail closed until a flashed image passes
 hardware validation. This does not affect the Magisk or pixincreate flavors.
 
-For isolated testing, `KERNELPATCH_COMMIT=b4b6f1db6c206b5eefe2c0894e5920f2541d2ee4` builds both `kpimg` and `kptools`
+For isolated testing, `KERNELPATCH_COMMIT=9a9e876da4bde8047b234561120d46c5db19128e` builds both `kpimg` and `kptools`
 from the [`fix/arm64-image-size`](https://github.com/david568303/KernelPatch/tree/fix/arm64-image-size) branch of the
 KernelPatch fork: upstream `a308d88` (GrapheneOS inlined-kCFI fix) plus two boot fixes described below.
 The compiler archive, source commit, and APatch manager are all pinned or digest-verified.
@@ -425,6 +425,11 @@ The hardware test of that fix still bootlooped with `Early Kernel PANIC`. The ca
 (MTE with `kasan.fault=panic`): KernelPatch's cred offset scan read past the end of a 176-byte slab object, which MTE
 turns into a fatal fault. QEMU with `mte=on` reproduced the panic; with the second fix the kernel boots there, including
 Android's first- and second-stage init from the real GrapheneOS ramdisks, with no KASAN reports.
+
+With both fixes the patched kernel boots on mustang, but the APatch manager could not get root: upstream KernelPatch
+trusts a manager APK only if it carries a lone v2 signature, and official APatch releases are signed v1+v2+v3. The fork
+instead requires every v2/v3/v3.1 block present to carry the APatch certificate, so whichever block Android verified is
+the trusted signer.
 
 To test it without the full avbroot flow, run the **APatch boot image test** workflow. It produces a workflow artifact
 (nothing is released) with the patched `boot.img`, the matching stock `boot.img`, and the `kptools` log. On a device

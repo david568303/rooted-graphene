@@ -105,7 +105,9 @@ KERNELPATCH_TOOLCHAIN_SHA256='62d66e0ad7bd7f2a183d236ee301a5c73c737c886c7944aa4f
 # - cred offset scans stay inside the slab object; GrapheneOS enables MTE with
 #   kasan.fault=panic, and the out-of-bounds read was the mustang "Early
 #   Kernel PANIC" (reproduced in QEMU with mte=on)
-MUSTANG_KERNELPATCH_TEST_COMMIT='b4b6f1db6c206b5eefe2c0894e5920f2541d2ee4'
+# - the official APatch manager (signed v1+v2+v3) is trusted again; upstream
+#   accepted only a lone v2 signature, so root was always refused
+MUSTANG_KERNELPATCH_TEST_COMMIT='9a9e876da4bde8047b234561120d46c5db19128e'
 
 SKIP_CLEANUP=${SKIP_CLEANUP:-''}
 
