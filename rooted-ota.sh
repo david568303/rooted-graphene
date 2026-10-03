@@ -83,11 +83,10 @@ APATCH_MANAGER_SHA256=''
 # renovate: datasource=github-releases packageName=bmax121/KernelPatch versioning=loose
 DEFAULT_KERNELPATCH_VERSION=0.13.9
 KERNELPATCH_VERSION=${KERNELPATCH_VERSION:-${DEFAULT_KERNELPATCH_VERSION}}
-# Optional immutable source commit. When set, kpimg and kptools are both built
-# from this exact commit with the patches in KERNELPATCH_PATCH_DIR applied.
-# This is intended for fixes not contained in the latest release.
+# Optional immutable source commit in KERNELPATCH_SOURCE_REPO. When set, kpimg
+# and kptools are both built from this exact commit. This is intended for
+# fixes not contained in the latest release.
 KERNELPATCH_COMMIT=${KERNELPATCH_COMMIT:-''}
-KERNELPATCH_PATCH_DIR='kernelpatch/patches'
 KERNELPATCH_DISPLAY_VERSION=''
 KERNELPATCH_KPIMG_URL=''
 KERNELPATCH_KPIMG_SHA256=''
@@ -95,12 +94,15 @@ KERNELPATCH_KPTOOLS_URL=''
 KERNELPATCH_KPTOOLS_SHA256=''
 APATCH_BOOT_IMAGE=''
 
-KERNELPATCH_SOURCE_REPO='https://github.com/bmax121/KernelPatch.git'
+# Fork of bmax121/KernelPatch carrying fixes not yet upstream.
+KERNELPATCH_SOURCE_REPO=${KERNELPATCH_SOURCE_REPO:-'https://github.com/david568303/KernelPatch.git'}
 KERNELPATCH_TOOLCHAIN_URL='https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz'
 KERNELPATCH_TOOLCHAIN_SHA256='62d66e0ad7bd7f2a183d236ee301a5c73c737c886c7944aa4f39415aab528daf'
-# First upstream main commit containing the GrapheneOS arm64 inlined-kCFI
-# fix (#311), plus the later boot-image padding fix (#316).
-MUSTANG_KERNELPATCH_TEST_COMMIT='a308d889c6eadcd01f4503615dee0b2f41e2eb62'
+# fix/arm64-image-size in the fork: upstream a308d88 (GrapheneOS arm64
+# inlined-kCFI fix #311, boot-image padding fix #316) plus a kptools fix that
+# keeps the bootloader from placing the ramdisk/DTB where KernelPatch copies
+# its start image. Without it the copy corrupted the initramfs in QEMU.
+MUSTANG_KERNELPATCH_TEST_COMMIT='c028e95aa7550ce5a91916cf60796b4c5f5a41f8'
 
 SKIP_CLEANUP=${SKIP_CLEANUP:-''}
 
@@ -561,11 +563,6 @@ function resolveAPatchRelease() {
       exit 1
     fi
     KERNELPATCH_DISPLAY_VERSION="${KERNELPATCH_VERSION}-g${KERNELPATCH_COMMIT:0:7}"
-    local patchCount
-    patchCount=$(find "$KERNELPATCH_PATCH_DIR" -maxdepth 1 -name '*.patch' 2>/dev/null | wc -l)
-    if (( patchCount > 0 )); then
-      KERNELPATCH_DISPLAY_VERSION+="-p${patchCount}"
-    fi
   else
     KERNELPATCH_DISPLAY_VERSION="$KERNELPATCH_VERSION"
   fi
@@ -625,16 +622,6 @@ function buildPinnedKernelPatch() {
     printRed 'KernelPatch checkout did not resolve to the requested commit.'
     exit 1
   fi
-
-  local patchFile
-  for patchFile in "$KERNELPATCH_PATCH_DIR"/*.patch; do
-    [[ -e "$patchFile" ]] || continue
-    if ! git -C "$sourceDir" apply --whitespace=nowarn "$(pwd)/$patchFile"; then
-      printRed "KernelPatch patch $patchFile does not apply to $KERNELPATCH_COMMIT."
-      exit 1
-    fi
-    print "Applied KernelPatch patch $patchFile"
-  done
 
   downloadVerifiedFile "$toolchainArchive" "$KERNELPATCH_TOOLCHAIN_URL" "$KERNELPATCH_TOOLCHAIN_SHA256"
   mkdir -p "$toolchainDir"

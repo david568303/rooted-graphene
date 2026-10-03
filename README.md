@@ -411,14 +411,15 @@ APatch is currently blocked for `mustang`. Both KernelPatch 0.13.3 and 0.13.9 bo
 though 0.13.9 can boot nonpersistently with `fastboot boot`. Automated builds fail closed until a flashed image passes
 hardware validation. This does not affect the Magisk or pixincreate flavors.
 
-For isolated testing, `KERNELPATCH_COMMIT=a308d889c6eadcd01f4503615dee0b2f41e2eb62` builds both `kpimg` and `kptools`
-from the exact post-0.13.9 upstream commit containing the GrapheneOS inlined-kCFI fix, with the patches in
-[`kernelpatch/patches`](kernelpatch/patches) applied on top. The compiler archive, source commit, and APatch manager are
-all pinned or digest-verified.
+For isolated testing, `KERNELPATCH_COMMIT=c028e95aa7550ce5a91916cf60796b4c5f5a41f8` builds both `kpimg` and `kptools`
+from the [`fix/arm64-image-size`](https://github.com/david568303/KernelPatch/tree/fix/arm64-image-size) branch of the
+KernelPatch fork: upstream `a308d88` (GrapheneOS inlined-kCFI fix) plus a fix for the suspected flashed-only bootloop.
+The compiler archive, source commit, and APatch manager are all pinned or digest-verified.
 
-The current patch addresses a suspected cause of the flashed-only bootloop: KernelPatch copies its start image to just
-past the kernel's declared arm64 `image_size`, which the boot protocol does not reserve, so the bootloader may have placed
-the DTB, ramdisk or bootconfig there. The patch grows `image_size` to cover that region. This is unverified on hardware.
+KernelPatch copies its start image to just past the kernel's declared arm64 `image_size`, which the boot protocol does
+not reserve, so a bootloader may have put the ramdisk or DTB there. In QEMU with the mustang kernel and the initramfs
+placed directly after `image_size`, unfixed KernelPatch corrupted the initramfs and panicked, while the fix (which grows
+`image_size` over that region) booted. Whether the Pixel bootloader places data there is not yet confirmed on hardware.
 
 To test it without the full avbroot flow, run the **APatch boot image test** workflow. It produces a workflow artifact
 (nothing is released) with the patched `boot.img`, the matching stock `boot.img`, and the `kptools` log. On a device
