@@ -403,6 +403,10 @@ signed OTA is re-extracted and KernelPatch must report `patched=true` for its bo
 signature authorization for the official manager, so the automated build does not create, store, or expose a reusable
 SuperKey.
 
+APatch OTAs are currently never published: no release assets and no OTA feed entries, including the test feed. A run
+that would release with `SKIP_APATCH=false` fails before building; use `SKIP_RELEASE=true` (`skip-release` in the
+workflow) to build APatch without publishing. The automatic workflow never builds APatch.
+
 APatch is currently blocked for `mustang`. Both KernelPatch 0.13.3 and 0.13.9 bootloop when flashed persistently, even
 though 0.13.9 can boot nonpersistently with `fastboot boot`. Automated builds fail closed until a flashed image passes
 hardware validation. This does not affect the Magisk or pixincreate flavors.

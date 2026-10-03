@@ -72,5 +72,7 @@ jobs:
       skip-rootless: true
       skip-magisk: true
       skip-pixincreate: false
+      # APatch is never published automatically (see ALLOW_APATCH_RELEASE).
+      skip-apatch: true
       # No pixincreate-version: use DEFAULT_PIXINCREATE_VERSION from rooted-ota.sh,
       # so new third-party root releases only ship after a reviewed Renovate PR.

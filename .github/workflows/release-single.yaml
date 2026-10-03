@@ -25,7 +25,7 @@ on:
         type: boolean
         default: true
       skip-apatch:
-        description: skip building the APatch OTA
+        description: skip building the APatch OTA (APatch only builds with skip-release)
         type: boolean
         default: true
       apatch-version:
@@ -100,7 +100,7 @@ on:
         required: false
         default: true
       skip-apatch:
-        description: skip building OTA rooted with APatch
+        description: skip building OTA rooted with APatch (APatch only builds with skip-release)
         type: boolean
         required: false
         default: true

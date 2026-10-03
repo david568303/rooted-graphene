@@ -44,6 +44,11 @@ SKIP_APATCH=${SKIP_APATCH:-'true'}
 # bootlooped when installed persistently. This escape hatch is intentionally
 # not exposed by the GitHub workflows.
 ALLOW_UNVERIFIED_APATCH=${ALLOW_UNVERIFIED_APATCH:-'false'}
+# APatch OTAs are never published (no release assets, no OTA feed, test feed
+# included) while the KernelPatch bootloop is unresolved. APatch can still be
+# built with SKIP_RELEASE. This escape hatch is intentionally not exposed by
+# the GitHub workflows.
+ALLOW_APATCH_RELEASE=${ALLOW_APATCH_RELEASE:-'false'}
 # https://grapheneos.org/releases#stable-channel
 OTA_VERSION=${OTA_VERSION:-'latest'}
 
@@ -170,6 +175,12 @@ function key2base64() {
 }
 
 function createAndReleaseRootedOta() {
+  if [[ "$SKIP_APATCH" != 'true' && "$ALLOW_APATCH_RELEASE" != 'true' ]]; then
+    printRed 'APatch OTAs are not published while the KernelPatch bootloop is unresolved.'
+    printRed 'Set SKIP_APATCH=true to release the other flavors, or SKIP_RELEASE to build APatch without publishing.'
+    exit 1
+  fi
+
   createRootedOta
   releaseOta
 
