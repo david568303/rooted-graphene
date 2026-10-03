@@ -778,6 +778,20 @@ function createAPatchTestOta() {
     printRed 'APatch test OTA was not produced.'
     exit 1
   fi
+  # Prove the signed OTA matches the published avb_pkmd.bin (the custom AVB key
+  # users flash and lock against). avbroot was fetched by patchOTAs.
+  if [[ -f 'avb_pkmd.bin' ]]; then
+    print "Verifying signed OTA against published avb_pkmd.bin"
+    if ! .tmp/avbroot ota verify --input ".tmp/$asset" --public-key-avb 'avb_pkmd.bin'; then
+      printRed 'Signed OTA does not verify against the published avb_pkmd.bin.'
+      exit 1
+    fi
+    printGreen 'Signed OTA verifies against published avb_pkmd.bin'
+  else
+    printRed 'avb_pkmd.bin not found; cannot confirm the OTA matches the published AVB key.'
+    exit 1
+  fi
+
   local outDir='.tmp/apatch-test-ota'
   mkdir -p "$outDir"
   cp ".tmp/$asset" "$outDir/"
