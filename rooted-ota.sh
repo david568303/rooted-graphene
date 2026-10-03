@@ -80,6 +80,12 @@ APATCH_MANAGER_SHA256=''
 # (as a system app under /system/app) so it is present and root-capable on first
 # boot. Set to 'false' to ship the OTA without it and install the APK by hand.
 APATCH_PREINSTALL_MANAGER=${APATCH_PREINSTALL_MANAGER:-'true'}
+# Embed the built KPM(s) into the patched boot so they auto-load at kernel init.
+# Default off: on mustang an embedded KPM bootloops early (stuck at the Google
+# logo, not fixable by disabling verity), and an embedded module is not
+# reboot-recoverable. Build KPMs with the standalone APatch KPM build workflow
+# and load them via the manager instead. Set to 'true' only to test embedding.
+APATCH_EMBED_KPMS=${APATCH_EMBED_KPMS:-'false'}
 # APatch 11224 pins KernelPatch 0.13.3, but that image does not boot on
 # mustang. KernelPatch 0.13.9 has been verified with a nonpersistent
 # `fastboot boot` test on mustang. Keep this independently pinned so Renovate
@@ -919,7 +925,7 @@ function patchAPatchBootImage() {
   # Note: an embedded KPM runs on every boot, so a faulty one is no longer
   # reboot-recoverable; the nm gate in buildAPatchKpm guards against that.
   local -a embedArgs=()
-  if [[ "${APATCH_EMBED_KPMS:-true}" == 'true' ]]; then
+  if [[ "$APATCH_EMBED_KPMS" == 'true' ]]; then
     if [[ -z "$KERNELPATCH_COMMIT" ]]; then
       # Embedding needs KPMs built from the same pinned source as kpimg so their
       # ABI matches. The released-kpimg path has no source commit, so skip it
