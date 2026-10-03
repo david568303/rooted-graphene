@@ -796,7 +796,87 @@ function createAPatchTestOta() {
   mkdir -p "$outDir"
   cp ".tmp/$asset" "$outDir/"
   (cd "$outDir" && sha256sum "$asset" > "$asset.sha256")
-  printGreen "APatch test OTA (signed; sideload per README): $outDir/$asset"
+  writeApatchInstallScripts "$outDir" "$asset"
+  printGreen "APatch test OTA (signed): $outDir/$asset"
+  printGreen "To install, run flash-all.sh (Linux/macOS) or flash-all.bat (Windows) from $outDir."
+}
+
+# Writes a self-contained installer (flash-all.sh / flash-all.bat) plus this
+# repo's custom AVB public key next to the OTA. The installer flashes the OTA
+# the correct way (dynamic partitions via fastbootd, which `fastboot flashall`
+# enters on its own) and then registers our avb_pkmd.bin. It deliberately does
+# not sideload, which is unreliable as a first install on some devices.
+function writeApatchInstallScripts() {
+  local outDir="$1" otaName="$2"
+
+  cp 'avb_pkmd.bin' "$outDir/avb_pkmd.bin"
+
+  cat > "$outDir/flash-all.sh" <<'EOF'
+#!/usr/bin/env bash
+# Auto-generated installer for the rooted (APatch) GrapheneOS OTA.
+#
+# Dynamic partitions (system, product, vendor, ...) live in `super` and must be
+# written through fastbootd, which `fastboot flashall` enters automatically.
+# This then registers this repo's custom AVB key. Do NOT `adb sideload` as a
+# first install; that fails with kPostInstallMountError on some devices.
+#
+# Requires `avbroot` and a recent `fastboot` on PATH, the device in bootloader
+# (fastboot) mode with the bootloader unlocked. Run from this folder.
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+cd "$here"
+OTA='__OTA__'
+
+echo "==> Extracting partition images from $OTA"
+avbroot ota extract --input "$OTA" --directory extracted --fastboot
+export ANDROID_PRODUCT_OUT="$here/extracted"
+
+echo "==> Flashing (reboots into fastbootd automatically)"
+fastboot flashall --skip-reboot
+
+echo "==> Registering custom AVB key"
+fastboot reboot-bootloader
+fastboot erase avb_custom_key
+fastboot flash avb_custom_key avb_pkmd.bin
+
+echo "==> Done. Rebooting."
+fastboot reboot
+EOF
+  chmod +x "$outDir/flash-all.sh"
+
+  cat > "$outDir/flash-all.bat" <<'EOF'
+@echo off
+REM Auto-generated installer for the rooted (APatch) GrapheneOS OTA.
+REM Requires avbroot and a recent fastboot on PATH, device in bootloader mode,
+REM bootloader unlocked. Run from this folder. Do NOT adb sideload as a first
+REM install.
+setlocal enableextensions
+cd /d "%~dp0"
+set "OTA=__OTA__"
+
+echo ==^> Extracting partition images from %OTA%
+avbroot ota extract --input "%OTA%" --directory extracted --fastboot || goto :err
+set "ANDROID_PRODUCT_OUT=%cd%\extracted"
+
+echo ==^> Flashing (reboots into fastbootd automatically)
+fastboot flashall --skip-reboot || goto :err
+
+echo ==^> Registering custom AVB key
+fastboot reboot-bootloader || goto :err
+fastboot erase avb_custom_key || goto :err
+fastboot flash avb_custom_key avb_pkmd.bin || goto :err
+
+echo ==^> Done. Rebooting.
+fastboot reboot
+goto :eof
+
+:err
+echo Flashing FAILED. See the output above.
+exit /b 1
+EOF
+
+  sed -i "s/__OTA__/${otaName}/g" "$outDir/flash-all.sh" "$outDir/flash-all.bat"
+  print "Wrote flash-all.sh and flash-all.bat (with repo avb_pkmd.bin) to $outDir"
 }
 
 function patchAPatchBootImage() {
@@ -827,6 +907,37 @@ function patchAPatchBootImage() {
   cp '.tmp/kptools-linux' "$workDir/kptools"
   cp '.tmp/kpimg-android' "$workDir/kpimg"
 
+  # Embed the APatch kernel modules into the patched boot image so they load
+  # automatically during kernel init (production path), instead of requiring a
+  # manual `kpm load` after every boot. The modules are built from the same
+  # pinned KernelPatch source as kpimg, so their ABI matches. Set
+  # APATCH_EMBED_KPMS=false to leave them out and load them by hand instead.
+  # Note: an embedded KPM runs on every boot, so a faulty one is no longer
+  # reboot-recoverable; the nm gate in buildAPatchKpm guards against that.
+  local -a embedArgs=()
+  if [[ "${APATCH_EMBED_KPMS:-true}" == 'true' ]]; then
+    if [[ -z "$KERNELPATCH_COMMIT" ]]; then
+      # Embedding needs KPMs built from the same pinned source as kpimg so their
+      # ABI matches. The released-kpimg path has no source commit, so skip it
+      # (load KPMs by hand there) rather than embed an ABI-mismatched module.
+      print 'APATCH_EMBED_KPMS: no pinned KERNELPATCH_COMMIT, skipping KPM embed; load KPMs manually instead.'
+    else
+      buildAPatchKpm
+      mkdir -p "$workDir/kpms"
+      local kpm
+      for kpm in .tmp/apatch-kpm/*.kpm; do
+        [[ -e "$kpm" ]] || continue
+        cp "$kpm" "$workDir/kpms/"
+        embedArgs+=(-M "kpms/$(basename "$kpm")" -T kpm)
+        print "Embedding KPM $(basename "$kpm") into the boot image (auto-loads at boot)."
+      done
+      if [[ ${#embedArgs[@]} -eq 0 ]]; then
+        printRed 'APATCH_EMBED_KPMS=true but no .kpm modules were built to embed.'
+        exit 1
+      fi
+    fi
+  fi
+
   (
     cd "$workDir"
     ./kptools unpack 'extracted/boot.img'
@@ -839,7 +950,8 @@ function patchAPatchBootImage() {
     mv kernel kernel.ori
     # Omitting -S uses APatch 11219+'s signature-authorized manager mode. This
     # avoids putting a reusable, root-equivalent SuperKey into CI or the image.
-    ./kptools -p -i kernel.ori -k kpimg -o kernel 2>&1 | tee kptools-patch.log
+    # Each -M/-T pair embeds a KPM (EXTRA_TYPE_KPM) that KernelPatch loads at boot.
+    ./kptools -p -i kernel.ori -k kpimg "${embedArgs[@]}" -o kernel 2>&1 | tee kptools-patch.log
 
     # KernelPatch can exit successfully and mark an image as patched even when
     # it failed to locate the arm64 relocation table. Such an image is not

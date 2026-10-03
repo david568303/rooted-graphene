@@ -454,7 +454,10 @@ This is the final check before APatch could be released.
 
 ##### Installing the full APatch OTA on mustang
 
-Follow the normal [Patch GrapheneOS with OTAs from this image](#patch-grapheneos-with-otas-from-this-image) flow, with
+The **APatch OTA test** artifact ships a ready-to-run installer next to the signed OTA: `flash-all.sh` (Linux/macOS),
+`flash-all.bat` (Windows), and this repo's `avb_pkmd.bin`. With the device in bootloader mode (unlocked) and `avbroot`
+plus a recent `fastboot` on `PATH`, run the script from that folder — it extracts the OTA, `flashall`s it through
+fastbootd, and registers the custom AVB key for you. The manual steps below are what those scripts automate, and the
 two mustang-specific points that otherwise cause a boot loop:
 
 - **Flash the dynamic partitions through `fastbootd`, not the bootloader.** `system`, `product`, `vendor`,
@@ -489,13 +492,16 @@ implementation as an APatch module only after the basic APatch boot and root flo
 
 ##### APatch kernel modules (KPMs)
 
-Kernel modules live under [`kernelpatch-modules/`](kernelpatch-modules) and are built by the **APatch KPM build** workflow
-against the pinned KernelPatch headers and toolchain. The build fails closed if a module references any symbol KernelPatch
-does not export. The resulting `.kpm` files are uploaded as a workflow artifact.
+Kernel modules live under [`kernelpatch-modules/`](kernelpatch-modules) and are built from the same pinned KernelPatch
+source and toolchain as `kpimg` (so their ABI matches). The build fails closed if a module references any symbol
+KernelPatch does not export. The standalone **APatch KPM build** workflow still uploads the raw `.kpm` files as a
+workflow artifact for manual loading.
 
-These modules are loaded at runtime through APatch (`kpm load <file>`, or the manager UI) **after** boot, so a faulty
-module is recoverable with a reboot; they are deliberately **not** embedded into the kernel image and not yet bundled into
-any OTA.
+For production, the APatch OTA build **embeds** every built `.kpm` into the patched boot image (`kptools -M <kpm> -T
+kpm`), so KernelPatch loads them automatically during kernel init — no manual `kpm load` after boot, and updates ship
+the modules with the OTA. Set `APATCH_EMBED_KPMS=false` to build without embedding and load them by hand instead. A
+module embedded this way runs on every boot, so a faulty one is no longer reboot-recoverable; the no-undefined-symbol
+(`nm`) gate is what guards against shipping a bad module.
 
 - `hidemaps` — hides root-tooling lines from `/proc/<pid>/maps` (what "Detected Abnormal Maps" style checks read). It
   erases only rendered map lines that match a denylist of tooling names (KernelPatch, APatch, `/data/adb`, zygisk,
