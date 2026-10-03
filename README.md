@@ -443,6 +443,12 @@ fastboot flash boot mustang-<version>-stock-boot.img            # revert
 If it does not boot, revert, boot normally, and capture `adb bugreport`: its last kmsg (`console-ramoops`) section
 holds the kernel log of the failed boot.
 
+Once the boot image is confirmed on hardware, the **APatch OTA test** workflow builds the full OTA (the same
+KernelPatch-patched `boot.img` fed to avbroot as a prepatched image, signed with the repo keys, `patched=true`
+re-verified). It needs the signing secrets, produces a workflow artifact, and never releases or touches any OTA feed.
+Install that zip the normal way described under "Patch GrapheneOS with OTAs from this image" (extract, `flashall`,
+custom AVB key, sideload). This is the final check before APatch could be released.
+
 After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
 include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after
 the basic APatch boot and root flow has been verified.

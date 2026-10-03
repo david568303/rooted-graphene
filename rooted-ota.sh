@@ -682,11 +682,42 @@ function createAPatchTestBootImage() {
   printGreen "APatch test boot image: $outDir/$name.img"
 }
 
+# Builds the full APatch OTA the normal way (KernelPatch-patched boot.img fed
+# to avbroot as a prepatched image, signed with the repo keys, patched=true
+# re-verified), but produces a workflow artifact instead of a release and never
+# touches the OTA feed. Install it the normal README way (extract, flashall,
+# custom AVB key, sideload). Needs the signing secrets.
+function createAPatchTestOta() {
+  SKIP_CLEANUP='true' # keep .tmp so the artifact survives for upload
+  SKIP_APATCH='false'
+  SKIP_ROOTLESS='true'
+  SKIP_MAGISK='true'
+  SKIP_PIXINCREATE='true'
+  FORCE_BUILD='true'      # always build, ignore any existing release asset
+  APATCH_FULL_TEST='true' # artifact-only; allowed on mustang, never released/fed
+  if [[ -z "$KERNELPATCH_COMMIT" && "$DEVICE_ID" == 'mustang' ]]; then
+    KERNELPATCH_COMMIT="$MUSTANG_KERNELPATCH_TEST_COMMIT"
+  fi
+
+  createRootedOta
+
+  local asset="${POTENTIAL_ASSETS['apatch']}"
+  if [[ -z "$asset" || ! -s ".tmp/$asset" ]]; then
+    printRed 'APatch test OTA was not produced.'
+    exit 1
+  fi
+  local outDir='.tmp/apatch-test-ota'
+  mkdir -p "$outDir"
+  cp ".tmp/$asset" "$outDir/"
+  (cd "$outDir" && sha256sum "$asset" > "$asset.sha256")
+  printGreen "APatch test OTA (signed; sideload per README): $outDir/$asset"
+}
+
 function patchAPatchBootImage() {
   local workDir=".tmp/apatch-${DEVICE_ID}-${OTA_VERSION}"
   local extractedDir="$workDir/extracted"
 
-  if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' && "${APATCH_BOOT_TEST:-}" != 'true' ]]; then
+  if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' && "${APATCH_BOOT_TEST:-}" != 'true' && "${APATCH_FULL_TEST:-}" != 'true' ]]; then
     if [[ "$UPLOAD_TEST_OTA" != 'true' || "$KERNELPATCH_COMMIT" != "$MUSTANG_KERNELPATCH_TEST_COMMIT" ]]; then
       printRed 'APatch production builds are blocked for mustang: released KernelPatch 0.13.3 and 0.13.9 bootloop.'
       printRed 'Only the pinned post-0.13.9 candidate may be published to the isolated test feed before hardware validation.'
