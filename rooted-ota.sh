@@ -83,10 +83,11 @@ APATCH_MANAGER_SHA256=''
 # renovate: datasource=github-releases packageName=bmax121/KernelPatch versioning=loose
 DEFAULT_KERNELPATCH_VERSION=0.13.9
 KERNELPATCH_VERSION=${KERNELPATCH_VERSION:-${DEFAULT_KERNELPATCH_VERSION}}
-# Optional immutable source commit. When set, kptools still comes from the
-# selected stable release, while kpimg is built from this exact
-# commit. This is intended for fixes merged after the latest release.
+# Optional immutable source commit. When set, kpimg and kptools are both built
+# from this exact commit with the patches in KERNELPATCH_PATCH_DIR applied.
+# This is intended for fixes not contained in the latest release.
 KERNELPATCH_COMMIT=${KERNELPATCH_COMMIT:-''}
+KERNELPATCH_PATCH_DIR='kernelpatch/patches'
 KERNELPATCH_DISPLAY_VERSION=''
 KERNELPATCH_KPIMG_URL=''
 KERNELPATCH_KPIMG_SHA256=''
@@ -560,6 +561,11 @@ function resolveAPatchRelease() {
       exit 1
     fi
     KERNELPATCH_DISPLAY_VERSION="${KERNELPATCH_VERSION}-g${KERNELPATCH_COMMIT:0:7}"
+    local patchCount
+    patchCount=$(find "$KERNELPATCH_PATCH_DIR" -maxdepth 1 -name '*.patch' 2>/dev/null | wc -l)
+    if (( patchCount > 0 )); then
+      KERNELPATCH_DISPLAY_VERSION+="-p${patchCount}"
+    fi
   else
     KERNELPATCH_DISPLAY_VERSION="$KERNELPATCH_VERSION"
   fi
@@ -594,17 +600,17 @@ function downloadVerifiedFile() {
 
 function downloadAPatchDependencies() {
   resolveAPatchRelease
-  downloadVerifiedFile '.tmp/kptools-linux' "$KERNELPATCH_KPTOOLS_URL" "$KERNELPATCH_KPTOOLS_SHA256"
-  chmod +x '.tmp/kptools-linux'
 
   if [[ -n "$KERNELPATCH_COMMIT" ]]; then
-    buildPinnedKernelPatchImage
+    buildPinnedKernelPatch
   else
+    downloadVerifiedFile '.tmp/kptools-linux' "$KERNELPATCH_KPTOOLS_URL" "$KERNELPATCH_KPTOOLS_SHA256"
+    chmod +x '.tmp/kptools-linux'
     downloadVerifiedFile '.tmp/kpimg-android' "$KERNELPATCH_KPIMG_URL" "$KERNELPATCH_KPIMG_SHA256"
   fi
 }
 
-function buildPinnedKernelPatchImage() {
+function buildPinnedKernelPatch() {
   local sourceDir='.tmp/kernelpatch-source'
   local toolchainArchive='.tmp/kernelpatch-aarch64-toolchain.tar.xz'
   local toolchainDir='.tmp/kernelpatch-toolchain'
@@ -620,6 +626,16 @@ function buildPinnedKernelPatchImage() {
     exit 1
   fi
 
+  local patchFile
+  for patchFile in "$KERNELPATCH_PATCH_DIR"/*.patch; do
+    [[ -e "$patchFile" ]] || continue
+    if ! git -C "$sourceDir" apply --whitespace=nowarn "$(pwd)/$patchFile"; then
+      printRed "KernelPatch patch $patchFile does not apply to $KERNELPATCH_COMMIT."
+      exit 1
+    fi
+    print "Applied KernelPatch patch $patchFile"
+  done
+
   downloadVerifiedFile "$toolchainArchive" "$KERNELPATCH_TOOLCHAIN_URL" "$KERNELPATCH_TOOLCHAIN_SHA256"
   mkdir -p "$toolchainDir"
   tar -xJf "$toolchainArchive" -C "$toolchainDir" --strip-components=1
@@ -633,13 +649,52 @@ function buildPinnedKernelPatchImage() {
     exit 1
   fi
   print "Built KernelPatch kpimg from commit $KERNELPATCH_COMMIT ($(sha256sum '.tmp/kpimg-android' | awk '{print $1}'))"
+
+  # kptools must come from the same patched source: some fixes are in the
+  # patch tool, not in kpimg.
+  ANDROID=1 cmake -S "$sourceDir/tools" -B "$sourceDir/tools/build" -DCMAKE_BUILD_TYPE=Release
+  ANDROID=1 cmake --build "$sourceDir/tools/build" -j "$(nproc)"
+  cp "$sourceDir/tools/build/kptools" '.tmp/kptools-linux'
+  chmod +x '.tmp/kptools-linux'
+  print "Built KernelPatch kptools from commit $KERNELPATCH_COMMIT ($(sha256sum '.tmp/kptools-linux' | awk '{print $1}'))"
+}
+
+# Builds only the KernelPatch-patched boot.img for hardware testing, without
+# signing keys, avbroot OTA patching or any release. Flash it with
+# `fastboot flash boot` on stock GrapheneOS of the same OTA_VERSION with an
+# unlocked bootloader.
+function createAPatchTestBootImage() {
+  SKIP_APATCH='false'
+  APATCH_BOOT_TEST='true'
+  if [[ -z "$KERNELPATCH_COMMIT" && "$DEVICE_ID" == 'mustang' ]]; then
+    KERNELPATCH_COMMIT="$MUSTANG_KERNELPATCH_TEST_COMMIT"
+  fi
+
+  findLatestVersion
+  mkdir -p .tmp
+  downloadAPatchDependencies
+  if ! ls ".tmp/$OTA_TARGET.zip" >/dev/null 2>&1; then
+    curl --fail -sLo ".tmp/$OTA_TARGET.zip" "$OTA_URL"
+  fi
+  downloadAvBroot
+  patchAPatchBootImage
+
+  local outDir='.tmp/apatch-test'
+  local name="${DEVICE_ID}-${OTA_VERSION}-apatch-boot-kp${KERNELPATCH_DISPLAY_VERSION}"
+  local workDir=".tmp/apatch-${DEVICE_ID}-${OTA_VERSION}"
+  mkdir -p "$outDir"
+  cp "$APATCH_BOOT_IMAGE" "$outDir/$name.img"
+  cp "$workDir/extracted/boot.img" "$outDir/${DEVICE_ID}-${OTA_VERSION}-stock-boot.img"
+  cp "$workDir/kptools-patch.log" "$outDir/$name.log"
+  (cd "$outDir" && sha256sum ./*.img > SHA256SUMS)
+  printGreen "APatch test boot image: $outDir/$name.img"
 }
 
 function patchAPatchBootImage() {
   local workDir=".tmp/apatch-${DEVICE_ID}-${OTA_VERSION}"
   local extractedDir="$workDir/extracted"
 
-  if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' ]]; then
+  if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' && "${APATCH_BOOT_TEST:-}" != 'true' ]]; then
     if [[ "$UPLOAD_TEST_OTA" != 'true' || "$KERNELPATCH_COMMIT" != "$MUSTANG_KERNELPATCH_TEST_COMMIT" ]]; then
       printRed 'APatch production builds are blocked for mustang: released KernelPatch 0.13.3 and 0.13.9 bootloop.'
       printRed 'Only the pinned post-0.13.9 candidate may be published to the isolated test feed before hardware validation.'

@@ -411,11 +411,26 @@ APatch is currently blocked for `mustang`. Both KernelPatch 0.13.3 and 0.13.9 bo
 though 0.13.9 can boot nonpersistently with `fastboot boot`. Automated builds fail closed until a flashed image passes
 hardware validation. This does not affect the Magisk or pixincreate flavors.
 
-For isolated testing, `KERNELPATCH_COMMIT=a308d889c6eadcd01f4503615dee0b2f41e2eb62` builds the payload from the exact
-post-0.13.9 upstream commit containing the GrapheneOS inlined-kCFI fix while retaining the released 0.13.9 `kptools`.
-The compiler archive, source commit, APatch manager, and released patch tool are all pinned or digest-verified. Mustang
-accepts this candidate only when `UPLOAD_TEST_OTA=true`; it cannot enter the production OTA feed until the boot, APatch
-root, recovery, OTA, and Zygisk checks have passed on hardware.
+For isolated testing, `KERNELPATCH_COMMIT=a308d889c6eadcd01f4503615dee0b2f41e2eb62` builds both `kpimg` and `kptools`
+from the exact post-0.13.9 upstream commit containing the GrapheneOS inlined-kCFI fix, with the patches in
+[`kernelpatch/patches`](kernelpatch/patches) applied on top. The compiler archive, source commit, and APatch manager are
+all pinned or digest-verified.
+
+The current patch addresses a suspected cause of the flashed-only bootloop: KernelPatch copies its start image to just
+past the kernel's declared arm64 `image_size`, which the boot protocol does not reserve, so the bootloader may have placed
+the DTB, ramdisk or bootconfig there. The patch grows `image_size` to cover that region. This is unverified on hardware.
+
+To test it without the full avbroot flow, run the **APatch boot image test** workflow. It produces a workflow artifact
+(nothing is released) with the patched `boot.img`, the matching stock `boot.img`, and the `kptools` log. On a device
+running stock GrapheneOS of exactly that `ota-version`, with the bootloader unlocked:
+
+```shell
+fastboot flash boot mustang-<version>-apatch-boot-kp<...>.img   # test
+fastboot flash boot mustang-<version>-stock-boot.img            # revert
+```
+
+If it does not boot, revert, boot normally, and capture `adb bugreport`: its last kmsg (`console-ramoops`) section
+holds the kernel log of the failed boot.
 
 After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
 include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after

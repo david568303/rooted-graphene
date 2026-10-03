@@ -1,0 +1,45 @@
+name: APatch boot image test
+
+# Builds only a KernelPatch-patched boot.img (plus the matching stock boot.img)
+# as a workflow artifact for hardware testing. Nothing is signed, released or
+# published to an OTA feed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      device-id:
+        description: Device ID
+        required: true
+        default: mustang
+      ota-version:
+        description: GrapheneOS OTA version installed on the device, or latest
+        required: false
+        default: latest
+      kernelpatch-commit:
+        description: KernelPatch source commit (empty uses the pinned mustang test commit)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get install -y jq curl git cmake
+      - name: Build test boot image
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEVICE_ID: ${{ inputs.device-id }}
+          OTA_VERSION: ${{ inputs.ota-version }}
+          KERNELPATCH_COMMIT: ${{ inputs.kernelpatch-commit }}
+        run: bash -c '. rooted-ota.sh && createAPatchTestBootImage'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apatch-boot-test-${{ inputs.device-id }}
+          path: .tmp/apatch-test/
+          retention-days: 14
+          if-no-files-found: error
