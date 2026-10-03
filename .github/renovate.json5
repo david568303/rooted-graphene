@@ -22,6 +22,19 @@
       description: "Require review for third-party root package updates",
       automerge: false,
     },
+    {
+      // Upstream's Renovate updates these same lines. If the fork bumped them
+      // too, the two could diverge and the upstream sync would hit merge
+      // conflicts, so shared dependencies arrive only via the sync.
+      matchFileNames: [
+        "rooted-ota.sh",
+        ".github/workflows/release-single.yaml",
+        ".github/workflows/renovate.yaml",
+      ],
+      matchPackageNames: ["!pixincreate/Magisk", "!bmax121/APatch", "!bmax121/KernelPatch"],
+      description: "Leave dependencies shared with upstream to the upstream sync",
+      enabled: false,
+    },
   ],
   customManagers: [
     {
