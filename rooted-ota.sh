@@ -99,10 +99,13 @@ KERNELPATCH_SOURCE_REPO=${KERNELPATCH_SOURCE_REPO:-'https://github.com/david5683
 KERNELPATCH_TOOLCHAIN_URL='https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz'
 KERNELPATCH_TOOLCHAIN_SHA256='62d66e0ad7bd7f2a183d236ee301a5c73c737c886c7944aa4f39415aab528daf'
 # fix/arm64-image-size in the fork: upstream a308d88 (GrapheneOS arm64
-# inlined-kCFI fix #311, boot-image padding fix #316) plus a kptools fix that
-# keeps the bootloader from placing the ramdisk/DTB where KernelPatch copies
-# its start image. Without it the copy corrupted the initramfs in QEMU.
-MUSTANG_KERNELPATCH_TEST_COMMIT='c028e95aa7550ce5a91916cf60796b4c5f5a41f8'
+# inlined-kCFI fix #311, boot-image padding fix #316) plus:
+# - kptools reserves the region KernelPatch copies its start image to, so the
+#   bootloader cannot place the ramdisk/DTB there
+# - cred offset scans stay inside the slab object; GrapheneOS enables MTE with
+#   kasan.fault=panic, and the out-of-bounds read was the mustang "Early
+#   Kernel PANIC" (reproduced in QEMU with mte=on)
+MUSTANG_KERNELPATCH_TEST_COMMIT='b4b6f1db6c206b5eefe2c0894e5920f2541d2ee4'
 
 SKIP_CLEANUP=${SKIP_CLEANUP:-''}
 

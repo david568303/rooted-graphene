@@ -411,15 +411,20 @@ APatch is currently blocked for `mustang`. Both KernelPatch 0.13.3 and 0.13.9 bo
 though 0.13.9 can boot nonpersistently with `fastboot boot`. Automated builds fail closed until a flashed image passes
 hardware validation. This does not affect the Magisk or pixincreate flavors.
 
-For isolated testing, `KERNELPATCH_COMMIT=c028e95aa7550ce5a91916cf60796b4c5f5a41f8` builds both `kpimg` and `kptools`
+For isolated testing, `KERNELPATCH_COMMIT=b4b6f1db6c206b5eefe2c0894e5920f2541d2ee4` builds both `kpimg` and `kptools`
 from the [`fix/arm64-image-size`](https://github.com/david568303/KernelPatch/tree/fix/arm64-image-size) branch of the
-KernelPatch fork: upstream `a308d88` (GrapheneOS inlined-kCFI fix) plus a fix for the suspected flashed-only bootloop.
+KernelPatch fork: upstream `a308d88` (GrapheneOS inlined-kCFI fix) plus two boot fixes described below.
 The compiler archive, source commit, and APatch manager are all pinned or digest-verified.
 
 KernelPatch copies its start image to just past the kernel's declared arm64 `image_size`, which the boot protocol does
 not reserve, so a bootloader may have put the ramdisk or DTB there. In QEMU with the mustang kernel and the initramfs
 placed directly after `image_size`, unfixed KernelPatch corrupted the initramfs and panicked, while the fix (which grows
 `image_size` over that region) booted. Whether the Pixel bootloader places data there is not yet confirmed on hardware.
+
+The hardware test of that fix still bootlooped with `Early Kernel PANIC`. The cause is GrapheneOS's kernel memory tagging
+(MTE with `kasan.fault=panic`): KernelPatch's cred offset scan read past the end of a 176-byte slab object, which MTE
+turns into a fatal fault. QEMU with `mte=on` reproduced the panic; with the second fix the kernel boots there, including
+Android's first- and second-stage init from the real GrapheneOS ramdisks, with no KASAN reports.
 
 To test it without the full avbroot flow, run the **APatch boot image test** workflow. It produces a workflow artifact
 (nothing is released) with the patched `boot.img`, the matching stock `boot.img`, and the `kptools` log. On a device
