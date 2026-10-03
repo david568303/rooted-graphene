@@ -485,10 +485,14 @@ To prove the images themselves are fine and isolate a mount/verity problem from 
 verification off (`fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img`): the same partitions then
 boot. Re-flash the signed `vbmeta.img` (no flags) once the dynamic partitions are written correctly.
 
-After the OTA boots, KernelPatch is loaded but `su` stays disabled (`KP su config: 0` in the log) until the APatch
-manager is set up. Install the official manager APK from the matching APatch release and configure its SuperKey; root
-then activates. APatch itself does not include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk
-implementation as an APatch module only after the basic APatch boot and root flow has been verified.
+The OTA **preinstalls the official APatch manager APK** as a system app (`/system/app/APatchManager`), injected via a
+small [`my-avbroot-setup`](https://github.com/chenxiaolong/my-avbroot-setup) module
+([`patch-modules/apatch_manager.py`](patch-modules/apatch_manager.py)); the APK is the signed release asset, pinned by
+the SHA-256 digest GitHub publishes. Because KernelPatch is patched in signature-authorized manager mode (no SuperKey),
+the preinstalled manager is trusted by its APK signature, so root should be available on first boot without a manual
+install or SuperKey entry. Set `APATCH_PREINSTALL_MANAGER=false` to ship the OTA without it and install the APK by hand.
+APatch itself does not include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an
+APatch module only after the basic APatch boot and root flow has been verified.
 
 ##### APatch kernel modules (KPMs)
 

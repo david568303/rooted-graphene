@@ -76,6 +76,10 @@ DEFAULT_APATCH_VERSION=11224
 APATCH_VERSION=${APATCH_VERSION:-${DEFAULT_APATCH_VERSION}}
 APATCH_MANAGER_URL=''
 APATCH_MANAGER_SHA256=''
+# Preinstall the official signed APatch manager APK into the OTA's system image
+# (as a system app under /system/app) so it is present and root-capable on first
+# boot. Set to 'false' to ship the OTA without it and install the APK by hand.
+APATCH_PREINSTALL_MANAGER=${APATCH_PREINSTALL_MANAGER:-'true'}
 # APatch 11224 pins KernelPatch 0.13.3, but that image does not boot on
 # mustang. KernelPatch 0.13.9 has been verified with a nonpersistent
 # `fastboot boot` test on mustang. Keep this independently pinned so Renovate
@@ -1034,6 +1038,35 @@ function downloadAndVerifyFromChenxiaolong() {
   fi
 }
 
+# Downloads the official signed APatch manager APK (verified by the SHA-256
+# digest GitHub publishes) and registers our system-app injection module into
+# the pinned my-avbroot-setup clone so patch.py can preinstall it. The clone is
+# pinned by PATCH_PY_COMMIT, so the all_modules() text is stable; registration
+# is grep-guarded to stay idempotent across re-runs.
+function installApatchManagerModule() {
+  resolveAPatchRelease
+  checkMandatoryVariable 'APATCH_MANAGER_URL' 'APATCH_MANAGER_SHA256'
+  downloadVerifiedFile '.tmp/apatch-manager.apk' "$APATCH_MANAGER_URL" "$APATCH_MANAGER_SHA256"
+
+  local modulesDir='.tmp/my-avbroot-setup/lib/modules'
+  if [[ ! -d "$modulesDir" ]]; then
+    printRed "my-avbroot-setup modules dir not found at $modulesDir"
+    exit 1
+  fi
+  cp 'patch-modules/apatch_manager.py' "$modulesDir/apatch_manager.py"
+  if ! grep -q 'APatchManagerModule' "$modulesDir/__init__.py"; then
+    sed -i \
+      -e '/from lib.modules.oemunlockonboot import OEMUnlockOnBootModule/a\    from lib.modules.apatch_manager import APatchManagerModule' \
+      -e '/^        OEMUnlockOnBootModule,$/a\        APatchManagerModule,' \
+      "$modulesDir/__init__.py"
+    if ! grep -q 'APatchManagerModule' "$modulesDir/__init__.py"; then
+      printRed 'Failed to register APatch manager module in my-avbroot-setup all_modules().'
+      exit 1
+    fi
+  fi
+  print "Preinstalling APatch manager $APATCH_VERSION into the OTA system image."
+}
+
 function patchOTAs() {
 
   downloadAvBroot
@@ -1055,6 +1088,9 @@ function patchOTAs() {
 
   if [[ "${POTENTIAL_ASSETS['apatch']+isset}" ]]; then
     patchAPatchBootImage
+    if [[ "$APATCH_PREINSTALL_MANAGER" == 'true' ]]; then
+      installApatchManagerModule
+    fi
   fi
 
   for flavor in "${!POTENTIAL_ASSETS[@]}"; do
@@ -1082,6 +1118,9 @@ function patchOTAs() {
       fi
       if [[ "$flavor" == 'apatch' ]]; then
         args+=("--patch-arg=--prepatched" "--patch-arg" "$APATCH_BOOT_IMAGE")
+        if [[ "$APATCH_PREINSTALL_MANAGER" == 'true' ]]; then
+          args+=("--module-apatch-manager" ".tmp/apatch-manager.apk")
+        fi
       fi
 
       # If env vars not set, passphrases will be queried interactively
