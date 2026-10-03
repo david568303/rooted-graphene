@@ -612,26 +612,46 @@ function downloadAPatchDependencies() {
   fi
 }
 
-function buildPinnedKernelPatch() {
-  local sourceDir='.tmp/kernelpatch-source'
+# Checks out the pinned KernelPatch commit and extracts the pinned aarch64
+# toolchain, both idempotent so repeated calls in one job reuse them. Sets
+# KERNELPATCH_SOURCE_DIR and KERNELPATCH_COMPILE_PREFIX.
+KERNELPATCH_SOURCE_DIR='.tmp/kernelpatch-source'
+KERNELPATCH_COMPILE_PREFIX=''
+function prepareKernelPatchSource() {
+  local sourceDir="$KERNELPATCH_SOURCE_DIR"
   local toolchainArchive='.tmp/kernelpatch-aarch64-toolchain.tar.xz'
   local toolchainDir='.tmp/kernelpatch-toolchain'
-  local compilerPrefix
 
-  rm -rf "$sourceDir" "$toolchainDir"
-  git init -q "$sourceDir"
-  git -C "$sourceDir" remote add origin "$KERNELPATCH_SOURCE_REPO"
-  git -C "$sourceDir" fetch --depth 1 origin "$KERNELPATCH_COMMIT"
-  git -C "$sourceDir" checkout -q --detach FETCH_HEAD
-  if [[ "$(git -C "$sourceDir" rev-parse HEAD)" != "$KERNELPATCH_COMMIT" ]]; then
-    printRed 'KernelPatch checkout did not resolve to the requested commit.'
+  if [[ ! "$KERNELPATCH_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+    printRed 'KERNELPATCH_COMMIT must be a full 40-character commit SHA to build from source.'
     exit 1
   fi
 
-  downloadVerifiedFile "$toolchainArchive" "$KERNELPATCH_TOOLCHAIN_URL" "$KERNELPATCH_TOOLCHAIN_SHA256"
-  mkdir -p "$toolchainDir"
-  tar -xJf "$toolchainArchive" -C "$toolchainDir" --strip-components=1
-  compilerPrefix="$(pwd)/$toolchainDir/bin/aarch64-none-elf-"
+  if [[ "$(git -C "$sourceDir" rev-parse HEAD 2>/dev/null)" != "$KERNELPATCH_COMMIT" ]]; then
+    rm -rf "$sourceDir"
+    git init -q "$sourceDir"
+    git -C "$sourceDir" remote add origin "$KERNELPATCH_SOURCE_REPO"
+    git -C "$sourceDir" fetch --depth 1 origin "$KERNELPATCH_COMMIT"
+    git -C "$sourceDir" checkout -q --detach FETCH_HEAD
+    if [[ "$(git -C "$sourceDir" rev-parse HEAD)" != "$KERNELPATCH_COMMIT" ]]; then
+      printRed 'KernelPatch checkout did not resolve to the requested commit.'
+      exit 1
+    fi
+  fi
+
+  if [[ ! -x "$toolchainDir/bin/aarch64-none-elf-gcc" ]]; then
+    downloadVerifiedFile "$toolchainArchive" "$KERNELPATCH_TOOLCHAIN_URL" "$KERNELPATCH_TOOLCHAIN_SHA256"
+    rm -rf "$toolchainDir"
+    mkdir -p "$toolchainDir"
+    tar -xJf "$toolchainArchive" -C "$toolchainDir" --strip-components=1
+  fi
+  KERNELPATCH_COMPILE_PREFIX="$(pwd)/$toolchainDir/bin/aarch64-none-elf-"
+}
+
+function buildPinnedKernelPatch() {
+  prepareKernelPatchSource
+  local sourceDir="$KERNELPATCH_SOURCE_DIR"
+  local compilerPrefix="$KERNELPATCH_COMPILE_PREFIX"
 
   make -C "$sourceDir/kernel" clean
   make -C "$sourceDir/kernel" hdr kpimg ANDROID=1 TARGET_COMPILE="$compilerPrefix"
@@ -649,6 +669,58 @@ function buildPinnedKernelPatch() {
   cp "$sourceDir/tools/build/kptools" '.tmp/kptools-linux'
   chmod +x '.tmp/kptools-linux'
   print "Built KernelPatch kptools from commit $KERNELPATCH_COMMIT ($(sha256sum '.tmp/kptools-linux' | awk '{print $1}'))"
+}
+
+# Builds the APatch kernel modules (KPMs) under kernelpatch-modules/ against the
+# pinned KernelPatch headers and toolchain, and collects the .kpm files. These
+# are loaded at runtime via APatch (kpm load) after boot, so a faulty module is
+# recoverable with a reboot; they are intentionally not embedded into kpimg.
+KPM_SOURCE_DIR=${KPM_SOURCE_DIR:-'kernelpatch-modules'}
+function buildAPatchKpm() {
+  if [[ -z "$KERNELPATCH_COMMIT" && "$DEVICE_ID" == 'mustang' ]]; then
+    KERNELPATCH_COMMIT="$MUSTANG_KERNELPATCH_TEST_COMMIT"
+  fi
+  mkdir -p .tmp
+  prepareKernelPatchSource
+  # generated headers (uapi copy etc.) the module tree may include
+  make -C "$KERNELPATCH_SOURCE_DIR/kernel" hdr ANDROID=1 \
+    TARGET_COMPILE="$KERNELPATCH_COMPILE_PREFIX" >/dev/null
+
+  local outDir='.tmp/apatch-kpm'
+  rm -rf "$outDir"
+  mkdir -p "$outDir"
+
+  local built=0 mod name
+  for mod in "$KPM_SOURCE_DIR"/*/; do
+    [[ -f "${mod}Makefile" ]] || continue
+    name="$(basename "$mod")"
+    make -C "$mod" clean >/dev/null 2>&1 || true
+    make -C "$mod" KP_DIR="$(pwd)/$KERNELPATCH_SOURCE_DIR" \
+      TARGET_COMPILE="$KERNELPATCH_COMPILE_PREFIX"
+    if ! ls "$mod"*.kpm >/dev/null 2>&1; then
+      printRed "KPM $name did not produce a .kpm"
+      exit 1
+    fi
+    # fail closed if the module references anything KernelPatch does not export
+    local undef
+    undef=$("${KERNELPATCH_COMPILE_PREFIX}nm" -u "$mod"*.kpm | awk '{print $2}' |
+      grep -vE '^(printk|hook_wrap|hook_wrap[0-9]|unhook|fp_hook|kallsyms_lookup_name|compat_copy_to_user|kfunc_def_|kvmalloc|kvfree|vmalloc|kfree|logkd|logke)$' || true)
+    if [[ -n "$undef" ]]; then
+      printRed "KPM $name has unresolved symbols not exported by KernelPatch:"
+      printRed "$undef"
+      exit 1
+    fi
+    cp "$mod"*.kpm "$outDir/"
+    built=$((built + 1))
+    print "Built KPM $name from KernelPatch $KERNELPATCH_COMMIT ($(sha256sum "$mod"*.kpm | awk '{print $1}'))"
+  done
+
+  if (( built == 0 )); then
+    printRed "No KPMs found under $KPM_SOURCE_DIR/"
+    exit 1
+  fi
+  (cd "$outDir" && sha256sum ./*.kpm > SHA256SUMS)
+  printGreen "APatch KPM(s) in $outDir (load with APatch after boot: kpm load <file>)"
 }
 
 # Builds only the KernelPatch-patched boot.img for hardware testing, without

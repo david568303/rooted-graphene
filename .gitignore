@@ -5,3 +5,7 @@
 /*.zip
 /*.zip.patched
 /.tmp/
+
+# KPM build outputs
+kernelpatch-modules/**/*.kpm
+kernelpatch-modules/**/*.o

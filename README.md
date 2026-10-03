@@ -453,6 +453,23 @@ After installing an APatch OTA, install the official manager APK from the matchi
 include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after
 the basic APatch boot and root flow has been verified.
 
+##### APatch kernel modules (KPMs)
+
+Kernel modules live under [`kernelpatch-modules/`](kernelpatch-modules) and are built by the **APatch KPM build** workflow
+against the pinned KernelPatch headers and toolchain. The build fails closed if a module references any symbol KernelPatch
+does not export. The resulting `.kpm` files are uploaded as a workflow artifact.
+
+These modules are loaded at runtime through APatch (`kpm load <file>`, or the manager UI) **after** boot, so a faulty
+module is recoverable with a reboot; they are deliberately **not** embedded into the kernel image and not yet bundled into
+any OTA.
+
+- `hidemaps` — hides root-tooling lines from `/proc/<pid>/maps` (what "Detected Abnormal Maps" style checks read). It
+  erases only rendered map lines that match a denylist of tooling names (KernelPatch, APatch, `/data/adb`, zygisk,
+  magisk, …), so ordinary mappings are untouched. An opt-in rule (`anonexec on`) additionally hides anonymous executable
+  mappings. Every access to the kernel's seq buffer is bounds-checked, so a layout mismatch disables hiding instead of
+  corrupting output. Control it with the module's control interface: `status`, `enable`/`disable`, `anonexec on|off`,
+  `add <token>`, `clear`.
+
 APatch test builds must remain outside production feeds. Do not lock the bootloader for an APatch test. Keep a known-good
 signed OTA available and verify persistent boot, recovery, the APatch manager, root access, and required modules first.
 
