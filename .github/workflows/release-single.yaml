@@ -176,26 +176,28 @@ jobs:
           UPLOAD_TEST_OTA_INPUT: ${{ toJSON(inputs.upload-test-ota) == 'true' && 'true' || 'false' }}
           SKIP_RELEASE_INPUT: ${{ toJSON(inputs.skip-release) == 'true' && 'true' || 'false' }}
         run: |
-          echo "DEVICE_ID=$(echo "$DEVICE_ID_INPUT" | xargs)" >> "$GITHUB_ENV"
-          if [[ "$SKIP_ROOTED_INPUT" != "true" ]]; then
-            echo "MAGISK_PREINIT_DEVICE=$(echo "$MAGISK_PREINIT_DEVICE_INPUT" | xargs)" >> "$GITHUB_ENV"
-          fi
-          
-          echo "MAGISK_VERSION=$(echo "$MAGISK_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
-          echo "PIXINCREATE_VERSION=$(echo "$PIXINCREATE_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
-          echo "PIXINCREATE_APK_NAME=$(echo "$PIXINCREATE_APK_NAME_INPUT" | xargs)" >> "$GITHUB_ENV"
-          echo "APATCH_VERSION=$(echo "$APATCH_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
-          echo "KERNELPATCH_VERSION=$(echo "$KERNELPATCH_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
-          echo "KERNELPATCH_COMMIT=$(echo "$KERNELPATCH_COMMIT_INPUT" | xargs)" >> "$GITHUB_ENV"
-          echo "OTA_VERSION=$(echo "$OTA_VERSION_INPUT" | xargs)" >> "$GITHUB_ENV"
-          echo "FORCE_OTA_SERVER_UPLOAD=$FORCE_OTA_SERVER_UPLOAD_INPUT" >> "$GITHUB_ENV"
-          echo "FORCE_BUILD=$FORCE_BUILD_INPUT" >> "$GITHUB_ENV"
-          echo "UPLOAD_TEST_OTA=$UPLOAD_TEST_OTA_INPUT" >> "$GITHUB_ENV"
-          echo "SKIP_ROOTLESS=$SKIP_ROOTLESS_INPUT" >> "$GITHUB_ENV"
-          echo "SKIP_MAGISK=$SKIP_MAGISK_INPUT" >> "$GITHUB_ENV"
-          echo "SKIP_PIXINCREATE=$SKIP_PIXINCREATE_INPUT" >> "$GITHUB_ENV"
-          echo "SKIP_APATCH=$SKIP_APATCH_INPUT" >> "$GITHUB_ENV"
-          echo "SKIP_RELEASE=$SKIP_RELEASE_INPUT" >> "$GITHUB_ENV"
+          {
+            echo "DEVICE_ID=$(echo "$DEVICE_ID_INPUT" | xargs)"
+            if [[ "$SKIP_ROOTED_INPUT" != "true" ]]; then
+              echo "MAGISK_PREINIT_DEVICE=$(echo "$MAGISK_PREINIT_DEVICE_INPUT" | xargs)"
+            fi
+
+            echo "MAGISK_VERSION=$(echo "$MAGISK_VERSION_INPUT" | xargs)"
+            echo "PIXINCREATE_VERSION=$(echo "$PIXINCREATE_VERSION_INPUT" | xargs)"
+            echo "PIXINCREATE_APK_NAME=$(echo "$PIXINCREATE_APK_NAME_INPUT" | xargs)"
+            echo "APATCH_VERSION=$(echo "$APATCH_VERSION_INPUT" | xargs)"
+            echo "KERNELPATCH_VERSION=$(echo "$KERNELPATCH_VERSION_INPUT" | xargs)"
+            echo "KERNELPATCH_COMMIT=$(echo "$KERNELPATCH_COMMIT_INPUT" | xargs)"
+            echo "OTA_VERSION=$(echo "$OTA_VERSION_INPUT" | xargs)"
+            echo "FORCE_OTA_SERVER_UPLOAD=$FORCE_OTA_SERVER_UPLOAD_INPUT"
+            echo "FORCE_BUILD=$FORCE_BUILD_INPUT"
+            echo "UPLOAD_TEST_OTA=$UPLOAD_TEST_OTA_INPUT"
+            echo "SKIP_ROOTLESS=$SKIP_ROOTLESS_INPUT"
+            echo "SKIP_MAGISK=$SKIP_MAGISK_INPUT"
+            echo "SKIP_PIXINCREATE=$SKIP_PIXINCREATE_INPUT"
+            echo "SKIP_APATCH=$SKIP_APATCH_INPUT"
+            echo "SKIP_RELEASE=$SKIP_RELEASE_INPUT"
+          } >> "$GITHUB_ENV"
       - name: Validate signing secrets
         env:
           PASSPHRASE_AVB: ${{ secrets.PASSPHRASE_AVB }}
@@ -219,11 +221,11 @@ jobs:
         env:
           GITHUB_REPO: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PASSPHRASE_AVB: ${{ secrets.PASSPHRASE_AVB || env.PASSPHRASE_AVB }}
-          PASSPHRASE_OTA: ${{ secrets.PASSPHRASE_OTA || env.PASSPHRASE_OTA }}
-          KEY_AVB_BASE64: ${{ secrets.KEY_AVB_BASE64 || env.KEY_AVB_BASE64 }}
-          KEY_OTA_BASE64: ${{ secrets.KEY_OTA_BASE64 || env.KEY_OTA_BASE64 }}
-          CERT_OTA_BASE64: ${{ secrets.CERT_OTA_BASE64 || env.CERT_OTA_BASE64 }}
+          PASSPHRASE_AVB: ${{ secrets.PASSPHRASE_AVB }}
+          PASSPHRASE_OTA: ${{ secrets.PASSPHRASE_OTA }}
+          KEY_AVB_BASE64: ${{ secrets.KEY_AVB_BASE64 }}
+          KEY_OTA_BASE64: ${{ secrets.KEY_OTA_BASE64 }}
+          CERT_OTA_BASE64: ${{ secrets.CERT_OTA_BASE64 }}
         run: |
           if [[ $SKIP_RELEASE == 'true' ]]; then
             bash -c '. rooted-ota.sh && createRootedOta && createOtaServerData'

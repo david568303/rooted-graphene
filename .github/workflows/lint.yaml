@@ -1,0 +1,36 @@
+name: Lint
+
+# Cheap checks on every change to the build script or workflows, so typos are
+# caught before a scheduled release run builds and signs OTAs.
+on:
+  push:
+    branches: ['*']
+    paths:
+      - rooted-ota.sh
+      - .github/workflows/**
+  pull_request:
+    types: [synchronize, opened, reopened]
+    paths:
+      - rooted-ota.sh
+      - .github/workflows/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: bash -n rooted-ota.sh
+      - name: ShellCheck
+        # shellcheck is preinstalled on GitHub's Ubuntu runners
+        run: shellcheck --severity=warning rooted-ota.sh
+      - name: Workflow syntax
+        run: |
+          # 1.7.12+ knows workflow_dispatch allows 25 inputs (older versions say 10)
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color

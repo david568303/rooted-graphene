@@ -72,4 +72,5 @@ jobs:
       skip-rootless: true
       skip-magisk: true
       skip-pixincreate: false
-      pixincreate-version: latest
+      # No pixincreate-version: use DEFAULT_PIXINCREATE_VERSION from rooted-ota.sh,
+      # so new third-party root releases only ship after a reviewed Renovate PR.

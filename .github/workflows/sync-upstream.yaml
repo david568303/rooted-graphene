@@ -24,6 +24,10 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          # The built-in token is not allowed to push changes to
+          # .github/workflows, which upstream touches regularly (e.g. Renovate
+          # bumping its action). A fine-grained PAT with Workflows write is required.
+          token: ${{ secrets.SYNC_UPSTREAM_TOKEN || github.token }}
 
       - name: Merge upstream main
         env:
@@ -53,7 +57,12 @@ jobs:
           fi
 
           after="$(git rev-parse HEAD)"
-          git push origin HEAD:main
+          if ! git push origin HEAD:main; then
+            if ! git diff --quiet "$before" "$after" -- .github/workflows; then
+              echo "::error::The merge changes workflow files, which requires the SYNC_UPSTREAM_TOKEN secret (fine-grained PAT with Contents and Workflows write)."
+            fi
+            exit 1
+          fi
 
           {
             echo '### Upstream sync'

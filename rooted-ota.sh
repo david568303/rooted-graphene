@@ -820,6 +820,7 @@ function patchOTAs() {
       # We need to add .tmp to PATH, but we can't use $PATH: because this would be the PATH of the host not the container
       # Python image is designed to run as root, so chown the files it creates back at the end
       # ... room for improvement 😐️
+      # shellcheck disable=SC2046
       docker run --rm -i $(tty &>/dev/null && echo '-t') \
     -v "$PWD:/app" \
     -w /app \
