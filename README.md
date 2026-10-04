@@ -456,20 +456,25 @@ This is the final check before APatch could be released.
 
 The **APatch OTA test** artifact ships a ready-to-run installer next to the signed OTA: `flash-all.sh` (Linux/macOS),
 `flash-all.bat` (Windows), and this repo's `avb_pkmd.bin`. With the device in bootloader mode (unlocked) and `avbroot`
-plus a recent `fastboot` on `PATH`, run the script from that folder — it extracts the OTA, `flashall`s it through
-fastbootd, and registers the custom AVB key for you. The manual steps below are what those scripts automate, and the
-two mustang-specific points that otherwise cause a boot loop:
+plus a recent `fastboot` on `PATH`, run the script from that folder — it extracts the OTA, writes every partition
+through fastbootd, and registers the custom AVB key for you. The manual steps below are what those scripts automate, and
+the three mustang-specific points that otherwise cause a boot loop:
 
-- **Flash the dynamic partitions through `fastbootd`, not the bootloader.** `system`, `product`, `vendor`,
-  `system_ext`, `system_dlkm` and `vendor_dlkm` live inside `super` and can only be written from userspace fastboot
-  (`fastbootd`). `fastboot flashall --skip-reboot` does this automatically — it reboots into `fastbootd` and writes
-  `super` — so the normal flow is enough. Flashing those partitions by hand from the bootloader instead fails with
-  `resize-logical-partition ... FAILED` and silently leaves `system` stale, which is what produced every "persistent
-  bootloop". Use an up-to-date `fastboot`; if a stale copy earlier in `PATH` shadows it, `fastboot reboot fastbootd`
-  reports `unknown reboot target fastbootd`.
+- **Flash *all* the dynamic partitions through `fastbootd`, not just what `flashall` covers.** `system`, `product`,
+  `vendor`, `system_ext`, `system_dlkm` and `vendor_dlkm` live inside `super` and can only be written from userspace
+  fastboot (`fastbootd`). `fastboot flashall` enters `fastbootd` and writes `boot`/`init_boot`/`vbmeta`/`vendor_boot`
+  **and `system` only** — it does **not** write `product`/`vendor`/`system_ext`/`system_dlkm`/`vendor_dlkm`. Those are
+  verity-protected, so if their on-disk copies don't match the signed vbmeta (A/B slot skew, or any version
+  difference) dm-verity fails and the device bootloops. Extract them with `avbroot ota extract --all` (or `-p <part>`)
+  and flash each one in `fastbootd` after `flashall`. Flashing logical partitions from the *bootloader* instead fails
+  with `resize-logical-partition ... FAILED`. Use an up-to-date `fastboot`; if a stale copy earlier in `PATH` shadows
+  it, `fastboot reboot fastbootd` reports `unknown reboot target fastbootd`.
+- **The OTA version must equal the stock version on the device.** The OTA's `vendor_boot`/`boot` is what boots
+  `fastbootd`, so if the OTA and the installed firmware differ, `fastboot flashall`'s reboot into `fastbootd` hangs at
+  `< waiting for any device >`. Flash the OTA that matches your installed GrapheneOS version (or update stock first).
 - **Do not `adb sideload` the OTA as the first install on mustang.** Sideload fails here with
-  `kPostInstallMountError (63)` / "Failed to mount /metadata". `flashall` is the first-install method; keep sideload
-  for later Custota-style updates only.
+  `kPostInstallMountError (63)` / "Failed to mount /metadata". Full-partition `flashall` (above) is the first-install
+  method; keep sideload for later Custota-style updates only.
 
 If `system` does not match the signed vbmeta, dm-verity cannot build its table and init aborts — which on screen looks
 like a generic boot loop. The kernel log of the failed boot (`/sys/fs/pstore/console-ramoops-0`, readable over `adb`

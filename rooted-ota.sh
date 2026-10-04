@@ -823,10 +823,12 @@ function createAPatchTestOta() {
 }
 
 # Writes a self-contained installer (flash-all.sh / flash-all.bat) plus this
-# repo's custom AVB public key next to the OTA. The installer flashes the OTA
-# the correct way (dynamic partitions via fastbootd, which `fastboot flashall`
-# enters on its own) and then registers our avb_pkmd.bin. It deliberately does
-# not sideload, which is unreliable as a first install on some devices.
+# repo's custom AVB public key next to the OTA. The installer writes the core
+# partitions via `fastboot flashall` (which enters fastbootd on its own) AND the
+# remaining verity-protected dynamic partitions flashall does not cover (product,
+# vendor, system_ext, system_dlkm, vendor_dlkm) — without them the device can
+# bootloop on a dm-verity mismatch — then registers our avb_pkmd.bin. It
+# deliberately does not sideload, which is unreliable as a first install.
 function writeApatchInstallScripts() {
   local outDir="$1" otaName="$2"
 
@@ -838,8 +840,15 @@ function writeApatchInstallScripts() {
 #
 # Dynamic partitions (system, product, vendor, ...) live in `super` and must be
 # written through fastbootd, which `fastboot flashall` enters automatically.
-# This then registers this repo's custom AVB key. Do NOT `adb sideload` as a
-# first install; that fails with kPostInstallMountError on some devices.
+# `fastboot flashall` only writes boot/init_boot/vbmeta/vendor_boot/system, so
+# this ALSO flashes the remaining verity-protected partitions (product, vendor,
+# system_ext, system_dlkm, vendor_dlkm) — otherwise their stale on-disk copies
+# can fail to match the signed vbmeta's dm-verity hashtree and the device
+# bootloops. Then it registers this repo's custom AVB key. Do NOT `adb sideload`
+# as a first install; that fails with kPostInstallMountError on some devices.
+#
+# IMPORTANT: flash this onto stock GrapheneOS of the SAME version as this OTA,
+# or `fastboot reboot fastbootd` below will hang at "< waiting for any device >".
 #
 # Requires `avbroot` and a recent `fastboot` on PATH, the device in bootloader
 # (fastboot) mode with the bootloader unlocked. Run from this folder.
@@ -850,10 +859,19 @@ OTA='__OTA__'
 
 echo "==> Extracting partition images from $OTA"
 avbroot ota extract --input "$OTA" --directory extracted --fastboot
+avbroot ota extract --input "$OTA" --directory extra \
+  -p product -p vendor -p system_ext -p system_dlkm -p vendor_dlkm
 export ANDROID_PRODUCT_OUT="$here/extracted"
 
-echo "==> Flashing (reboots into fastbootd automatically)"
+echo "==> Flashing core partitions (enters fastbootd automatically)"
 fastboot flashall --skip-reboot
+
+echo "==> Flashing remaining dynamic partitions (in fastbootd)"
+for p in product vendor system_ext system_dlkm vendor_dlkm; do
+  if [ -f "extra/$p.img" ]; then
+    fastboot flash "$p" "extra/$p.img"
+  fi
+done
 
 echo "==> Registering custom AVB key"
 fastboot reboot-bootloader
@@ -868,19 +886,30 @@ EOF
   cat > "$outDir/flash-all.bat" <<'EOF'
 @echo off
 REM Auto-generated installer for the rooted (APatch) GrapheneOS OTA.
+REM Writes the core partitions via fastbootd (fastboot flashall) AND the
+REM remaining verity-protected dynamic partitions (product, vendor, system_ext,
+REM system_dlkm, vendor_dlkm), which flashall does not cover; without them the
+REM device can bootloop on a dm-verity mismatch. Then registers the custom AVB
+REM key. Flash onto stock GrapheneOS of the SAME version as this OTA, or the
+REM reboot into fastbootd hangs. Do NOT adb sideload as a first install.
 REM Requires avbroot and a recent fastboot on PATH, device in bootloader mode,
-REM bootloader unlocked. Run from this folder. Do NOT adb sideload as a first
-REM install.
+REM bootloader unlocked. Run from this folder.
 setlocal enableextensions
 cd /d "%~dp0"
 set "OTA=__OTA__"
 
 echo ==^> Extracting partition images from %OTA%
 avbroot ota extract --input "%OTA%" --directory extracted --fastboot || goto :err
+avbroot ota extract --input "%OTA%" --directory extra -p product -p vendor -p system_ext -p system_dlkm -p vendor_dlkm || goto :err
 set "ANDROID_PRODUCT_OUT=%cd%\extracted"
 
-echo ==^> Flashing (reboots into fastbootd automatically)
+echo ==^> Flashing core partitions (enters fastbootd automatically)
 fastboot flashall --skip-reboot || goto :err
+
+echo ==^> Flashing remaining dynamic partitions (in fastbootd)
+for %%P in (product vendor system_ext system_dlkm vendor_dlkm) do (
+  if exist "extra\%%P.img" (fastboot flash %%P "extra\%%P.img" || goto :err)
+)
 
 echo ==^> Registering custom AVB key
 fastboot reboot-bootloader || goto :err
