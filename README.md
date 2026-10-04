@@ -10,6 +10,19 @@ Allows for switching between magisk and rootless via OTA upgrades.
 > As an alternative we offer [pixincreate's magisk](https://github.com/pixincreate/Magisk) that contains patches to make zygisk work. Before using it please note that this way you add another party to your supply chain that basically gains root acces to your device.  
  See [below](#using-other-rooting-mechanisms) for more details and the reason why kernelsu cannot be integrated easily with this project.
 
+## Install
+
+> ⚠️ Flashing carries risk. Keep **OEM unlocking enabled**, never switch slots if a flash fails, and flash a rooted OTA whose version **exactly matches** the stock GrapheneOS already on the device. Read the full [caveats](#installation) first — you use this at your own risk.
+
+1. **Install stock GrapheneOS**, bootloader unlocked, using **`fastboot` ≥ 35.0.1**. Write down the exact version. ([how](#install-grapheneos))
+2. **Download the rooted OTA for your device and that exact version** from [Releases](https://github.com/david568303/rooted-graphene/releases).
+3. **Flash it** — pick one flavor:
+   - **APatch** — kernel-level root. Released for every device; hardware-validated on Pixel 10 Pro XL (mustang), other devices are newer so please report issues. Flash **all** partitions and register the AVB key (`avbroot ota extract --all` → `fastboot flashall` → the remaining dynamic partitions in fastbootd → `avb_pkmd.bin`), boot, then install the APatch manager APK from the matching [APatch release](https://github.com/bmax121/APatch/releases). Do **not** `adb sideload` as a first install. Full steps: [Installing the full APatch OTA](#installing-the-full-apatch-ota-on-mustang).
+   - **Magisk (pixincreate)** — seamless [Custota](https://github.com/chenxiaolong/Custota) auto-updates. Full steps: [Patch GrapheneOS with OTAs](#patch-grapheneos-with-otas-from-this-image).
+4. **(Optional) re-lock** the bootloader — only after confirming the device boots cleanly.
+
+If a device won't boot, capturing the kernel log of the failed boot (`adb shell su -c 'cat /sys/fs/pstore/console-ramoops-0'` after booting any working image) is the single most useful thing to attach to an issue.
+
 ## Supported devices
 
 See [rooted-graphene/ota | .github/workflows/release-multiple.yaml](https://github.com/rooted-graphene/ota/blob/main/.github/workflows/release-multiple.yaml).
