@@ -387,8 +387,9 @@ Another option [might be](https://github.com/schnatterer/rooted-graphene/pull/73
 The script can also build a separate `apatch` flavor by setting `SKIP_APATCH=false` (or disabling `skip-apatch` in the
 single-device workflow). `APATCH_VERSION=latest` resolves the latest stable [APatch](https://github.com/bmax121/APatch)
 release. KernelPatch is independently pinned by `KERNELPATCH_VERSION` because APatch 11224's older pinned KernelPatch
-0.13.3 does not boot on `mustang`. KernelPatch 0.13.9 passed a nonpersistent `fastboot boot` test there, but still
-bootlooped after a verified persistent installation. Set
+0.13.3 does not boot on `mustang`. KernelPatch 0.13.9 boots on `mustang` both nonpersistently (`fastboot boot`) and as
+a persistent install, once the full OTA is flashed as described under
+[Installing the full APatch OTA on mustang](#installing-the-full-apatch-ota-on-mustang); 0.13.3 does not boot at all. Set
 `KERNELPATCH_VERSION=apatch` to use the version pinned by APatch itself, or `latest` to resolve the latest stable
 [KernelPatch](https://github.com/bmax121/KernelPatch) release. The matching `kpimg-android` and `kptools-linux` artifacts
 are downloaded from the official KernelPatch release, and every artifact is checked against GitHub's published SHA-256
@@ -407,9 +408,12 @@ APatch OTAs are currently never published: no release assets and no OTA feed ent
 that would release with `SKIP_APATCH=false` fails before building; use `SKIP_RELEASE=true` (`skip-release` in the
 workflow) to build APatch without publishing. The automatic workflow never builds APatch.
 
-APatch is currently blocked for `mustang`. Both KernelPatch 0.13.3 and 0.13.9 bootloop when flashed persistently, even
-though 0.13.9 can boot nonpersistently with `fastboot boot`. Automated builds fail closed until a flashed image passes
-hardware validation. This does not affect the Magisk or pixincreate flavors.
+Persistent APatch installs now boot on `mustang` with the fork's KernelPatch 0.13.9 (the `fix/arm64-image-size` branch
+below); 0.13.3 still does not boot at all. The earlier "persistent bootloop" was **not** a KernelPatch fault — it was an
+install-procedure problem flashing the full OTA, resolved by writing the dynamic partitions through `fastbootd`
+(see [Installing the full APatch OTA on mustang](#installing-the-full-apatch-ota-on-mustang)). APatch OTAs are still not
+auto-published and automated builds still fail closed until a flashed image passes hardware validation; this does not
+affect the Magisk or pixincreate flavors.
 
 For isolated testing, `KERNELPATCH_COMMIT=9a9e876da4bde8047b234561120d46c5db19128e` builds both `kpimg` and `kptools`
 from the [`fix/arm64-image-size`](https://github.com/david568303/KernelPatch/tree/fix/arm64-image-size) branch of the
@@ -446,22 +450,66 @@ holds the kernel log of the failed boot.
 Once the boot image is confirmed on hardware, the **APatch OTA test** workflow builds the full OTA (the same
 KernelPatch-patched `boot.img` fed to avbroot as a prepatched image, signed with the repo keys, `patched=true`
 re-verified). It needs the signing secrets, produces a workflow artifact, and never releases or touches any OTA feed.
-Install that zip the normal way described under "Patch GrapheneOS with OTAs from this image" (extract, `flashall`,
-custom AVB key, sideload). This is the final check before APatch could be released.
+This is the final check before APatch could be released.
 
-After installing an APatch OTA, install the official manager APK from the matching APatch release. APatch itself does not
-include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an APatch module only after
-the basic APatch boot and root flow has been verified.
+##### Installing the full APatch OTA on mustang
+
+The **APatch OTA test** artifact ships a ready-to-run installer next to the signed OTA: `flash-all.sh` (Linux/macOS),
+`flash-all.bat` (Windows), and this repo's `avb_pkmd.bin`. With the device in bootloader mode (unlocked) and `avbroot`
+plus a recent `fastboot` on `PATH`, run the script from that folder — it extracts the OTA, `flashall`s it through
+fastbootd, and registers the custom AVB key for you. The manual steps below are what those scripts automate, and the
+two mustang-specific points that otherwise cause a boot loop:
+
+- **Flash the dynamic partitions through `fastbootd`, not the bootloader.** `system`, `product`, `vendor`,
+  `system_ext`, `system_dlkm` and `vendor_dlkm` live inside `super` and can only be written from userspace fastboot
+  (`fastbootd`). `fastboot flashall --skip-reboot` does this automatically — it reboots into `fastbootd` and writes
+  `super` — so the normal flow is enough. Flashing those partitions by hand from the bootloader instead fails with
+  `resize-logical-partition ... FAILED` and silently leaves `system` stale, which is what produced every "persistent
+  bootloop". Use an up-to-date `fastboot`; if a stale copy earlier in `PATH` shadows it, `fastboot reboot fastbootd`
+  reports `unknown reboot target fastbootd`.
+- **Do not `adb sideload` the OTA as the first install on mustang.** Sideload fails here with
+  `kPostInstallMountError (63)` / "Failed to mount /metadata". `flashall` is the first-install method; keep sideload
+  for later Custota-style updates only.
+
+If `system` does not match the signed vbmeta, dm-verity cannot build its table and init aborts — which on screen looks
+like a generic boot loop. The kernel log of the failed boot (`/sys/fs/pstore/console-ramoops-0`, readable over `adb`
+after booting any working image) shows the real cause:
+
+```
+init: DM_TABLE_LOAD failed: name=system-verity, ... : Argument list too long
+init: Failed to mount /system
+Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00
+```
+
+To prove the images themselves are fine and isolate a mount/verity problem from a bad image, flash the vbmeta with
+verification off (`fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img`): the same partitions then
+boot. Re-flash the signed `vbmeta.img` (no flags) once the dynamic partitions are written correctly.
+
+The OTA test artifact **bundles the official signed APatch manager APK** (`APatch-<version>.apk`, pinned by the SHA-256
+digest GitHub publishes) next to the OTA; install it by hand after boot. Because KernelPatch is patched in
+signature-authorized manager mode (no SuperKey), the manager is trusted by its APK signature, so root activates once the
+app is installed, without a SuperKey entry.
+
+Preinstalling the manager into the system image (as a system app, via the
+[`patch-modules/apatch_manager.py`](patch-modules/apatch_manager.py) [`my-avbroot-setup`](https://github.com/chenxiaolong/my-avbroot-setup)
+module, `APATCH_PREINSTALL_MANAGER=true`) is **off by default**: on `mustang` the resulting OTA bootloops (the same OTA
+boots without the injection), so injecting the app is left as an opt-in to investigate, not a shipping default.
+
+APatch itself does not include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an
+APatch module only after the basic APatch boot and root flow has been verified.
 
 ##### APatch kernel modules (KPMs)
 
-Kernel modules live under [`kernelpatch-modules/`](kernelpatch-modules) and are built by the **APatch KPM build** workflow
-against the pinned KernelPatch headers and toolchain. The build fails closed if a module references any symbol KernelPatch
-does not export. The resulting `.kpm` files are uploaded as a workflow artifact.
+Kernel modules live under [`kernelpatch-modules/`](kernelpatch-modules) and are built from the same pinned KernelPatch
+source and toolchain as `kpimg` (so their ABI matches). The build fails closed if a module references any symbol
+KernelPatch does not export. The standalone **APatch KPM build** workflow still uploads the raw `.kpm` files as a
+workflow artifact for manual loading.
 
-These modules are loaded at runtime through APatch (`kpm load <file>`, or the manager UI) **after** boot, so a faulty
-module is recoverable with a reboot; they are deliberately **not** embedded into the kernel image and not yet bundled into
-any OTA.
+The build can also **embed** every built `.kpm` into the patched boot image (`kptools -M <kpm> -T kpm`) so KernelPatch
+loads them during kernel init, via `APATCH_EMBED_KPMS=true`. This is **off by default**: on `mustang` an embedded KPM
+bootloops early (stuck at the Google logo, and *not* fixable by disabling verity, because the failure is in the boot
+kernel before userspace), and an embedded module runs on every boot so a faulty one is no longer reboot-recoverable.
+Until embedding is understood on this kernel, ship the OTA without it and load KPMs through the manager after boot.
 
 - `hidemaps` — hides root-tooling lines from `/proc/<pid>/maps` (what "Detected Abnormal Maps" style checks read). It
   erases only rendered map lines that match a denylist of tooling names (KernelPatch, APatch, `/data/adb`, zygisk,

@@ -76,6 +76,18 @@ DEFAULT_APATCH_VERSION=11224
 APATCH_VERSION=${APATCH_VERSION:-${DEFAULT_APATCH_VERSION}}
 APATCH_MANAGER_URL=''
 APATCH_MANAGER_SHA256=''
+# Preinstall the official signed APatch manager APK into the OTA's system image
+# (as a system app under /system/app). Default off: injecting it bootloops
+# mustang (the no-embed OTA boots without it, and fails to boot with it), so the
+# APK is instead bundled next to the OTA for manual install after boot. Set to
+# 'true' only to investigate the injection path.
+APATCH_PREINSTALL_MANAGER=${APATCH_PREINSTALL_MANAGER:-'false'}
+# Embed the built KPM(s) into the patched boot so they auto-load at kernel init.
+# Default off: on mustang an embedded KPM bootloops early (stuck at the Google
+# logo, not fixable by disabling verity), and an embedded module is not
+# reboot-recoverable. Build KPMs with the standalone APatch KPM build workflow
+# and load them via the manager instead. Set to 'true' only to test embedding.
+APATCH_EMBED_KPMS=${APATCH_EMBED_KPMS:-'false'}
 # APatch 11224 pins KernelPatch 0.13.3, but that image does not boot on
 # mustang. KernelPatch 0.13.9 has been verified with a nonpersistent
 # `fastboot boot` test on mustang. Keep this independently pinned so Renovate
@@ -778,11 +790,114 @@ function createAPatchTestOta() {
     printRed 'APatch test OTA was not produced.'
     exit 1
   fi
+  # Prove the signed OTA matches the published avb_pkmd.bin (the custom AVB key
+  # users flash and lock against). avbroot was fetched by patchOTAs.
+  if [[ -f 'avb_pkmd.bin' ]]; then
+    print "Verifying signed OTA against published avb_pkmd.bin"
+    if ! .tmp/avbroot ota verify --input ".tmp/$asset" --public-key-avb 'avb_pkmd.bin'; then
+      printRed 'Signed OTA does not verify against the published avb_pkmd.bin.'
+      exit 1
+    fi
+    printGreen 'Signed OTA verifies against published avb_pkmd.bin'
+  else
+    printRed 'avb_pkmd.bin not found; cannot confirm the OTA matches the published AVB key.'
+    exit 1
+  fi
+
   local outDir='.tmp/apatch-test-ota'
   mkdir -p "$outDir"
   cp ".tmp/$asset" "$outDir/"
   (cd "$outDir" && sha256sum "$asset" > "$asset.sha256")
-  printGreen "APatch test OTA (signed; sideload per README): $outDir/$asset"
+  writeApatchInstallScripts "$outDir" "$asset"
+
+  # Bundle the official signed manager APK next to the OTA for manual install
+  # after boot (preinstalling it into system is disabled by default because it
+  # bootloops mustang). Verified by GitHub's published SHA-256 digest.
+  resolveAPatchRelease
+  downloadVerifiedFile '.tmp/apatch-manager.apk' "$APATCH_MANAGER_URL" "$APATCH_MANAGER_SHA256"
+  cp '.tmp/apatch-manager.apk' "$outDir/APatch-${APATCH_VERSION}.apk"
+
+  printGreen "APatch test OTA (signed): $outDir/$asset"
+  printGreen "To install, run flash-all.sh (Linux/macOS) or flash-all.bat (Windows) from $outDir,"
+  printGreen "then install APatch-${APATCH_VERSION}.apk on the booted device."
+}
+
+# Writes a self-contained installer (flash-all.sh / flash-all.bat) plus this
+# repo's custom AVB public key next to the OTA. The installer flashes the OTA
+# the correct way (dynamic partitions via fastbootd, which `fastboot flashall`
+# enters on its own) and then registers our avb_pkmd.bin. It deliberately does
+# not sideload, which is unreliable as a first install on some devices.
+function writeApatchInstallScripts() {
+  local outDir="$1" otaName="$2"
+
+  cp 'avb_pkmd.bin' "$outDir/avb_pkmd.bin"
+
+  cat > "$outDir/flash-all.sh" <<'EOF'
+#!/usr/bin/env bash
+# Auto-generated installer for the rooted (APatch) GrapheneOS OTA.
+#
+# Dynamic partitions (system, product, vendor, ...) live in `super` and must be
+# written through fastbootd, which `fastboot flashall` enters automatically.
+# This then registers this repo's custom AVB key. Do NOT `adb sideload` as a
+# first install; that fails with kPostInstallMountError on some devices.
+#
+# Requires `avbroot` and a recent `fastboot` on PATH, the device in bootloader
+# (fastboot) mode with the bootloader unlocked. Run from this folder.
+set -euo pipefail
+here="$(cd "$(dirname "$0")" && pwd)"
+cd "$here"
+OTA='__OTA__'
+
+echo "==> Extracting partition images from $OTA"
+avbroot ota extract --input "$OTA" --directory extracted --fastboot
+export ANDROID_PRODUCT_OUT="$here/extracted"
+
+echo "==> Flashing (reboots into fastbootd automatically)"
+fastboot flashall --skip-reboot
+
+echo "==> Registering custom AVB key"
+fastboot reboot-bootloader
+fastboot erase avb_custom_key
+fastboot flash avb_custom_key avb_pkmd.bin
+
+echo "==> Done. Rebooting."
+fastboot reboot
+EOF
+  chmod +x "$outDir/flash-all.sh"
+
+  cat > "$outDir/flash-all.bat" <<'EOF'
+@echo off
+REM Auto-generated installer for the rooted (APatch) GrapheneOS OTA.
+REM Requires avbroot and a recent fastboot on PATH, device in bootloader mode,
+REM bootloader unlocked. Run from this folder. Do NOT adb sideload as a first
+REM install.
+setlocal enableextensions
+cd /d "%~dp0"
+set "OTA=__OTA__"
+
+echo ==^> Extracting partition images from %OTA%
+avbroot ota extract --input "%OTA%" --directory extracted --fastboot || goto :err
+set "ANDROID_PRODUCT_OUT=%cd%\extracted"
+
+echo ==^> Flashing (reboots into fastbootd automatically)
+fastboot flashall --skip-reboot || goto :err
+
+echo ==^> Registering custom AVB key
+fastboot reboot-bootloader || goto :err
+fastboot erase avb_custom_key || goto :err
+fastboot flash avb_custom_key avb_pkmd.bin || goto :err
+
+echo ==^> Done. Rebooting.
+fastboot reboot
+goto :eof
+
+:err
+echo Flashing FAILED. See the output above.
+exit /b 1
+EOF
+
+  sed -i "s/__OTA__/${otaName}/g" "$outDir/flash-all.sh" "$outDir/flash-all.bat"
+  print "Wrote flash-all.sh and flash-all.bat (with repo avb_pkmd.bin) to $outDir"
 }
 
 function patchAPatchBootImage() {
@@ -813,6 +928,37 @@ function patchAPatchBootImage() {
   cp '.tmp/kptools-linux' "$workDir/kptools"
   cp '.tmp/kpimg-android' "$workDir/kpimg"
 
+  # Embed the APatch kernel modules into the patched boot image so they load
+  # automatically during kernel init (production path), instead of requiring a
+  # manual `kpm load` after every boot. The modules are built from the same
+  # pinned KernelPatch source as kpimg, so their ABI matches. Set
+  # APATCH_EMBED_KPMS=false to leave them out and load them by hand instead.
+  # Note: an embedded KPM runs on every boot, so a faulty one is no longer
+  # reboot-recoverable; the nm gate in buildAPatchKpm guards against that.
+  local -a embedArgs=()
+  if [[ "$APATCH_EMBED_KPMS" == 'true' ]]; then
+    if [[ -z "$KERNELPATCH_COMMIT" ]]; then
+      # Embedding needs KPMs built from the same pinned source as kpimg so their
+      # ABI matches. The released-kpimg path has no source commit, so skip it
+      # (load KPMs by hand there) rather than embed an ABI-mismatched module.
+      print 'APATCH_EMBED_KPMS: no pinned KERNELPATCH_COMMIT, skipping KPM embed; load KPMs manually instead.'
+    else
+      buildAPatchKpm
+      mkdir -p "$workDir/kpms"
+      local kpm
+      for kpm in .tmp/apatch-kpm/*.kpm; do
+        [[ -e "$kpm" ]] || continue
+        cp "$kpm" "$workDir/kpms/"
+        embedArgs+=(-M "kpms/$(basename "$kpm")" -T kpm)
+        print "Embedding KPM $(basename "$kpm") into the boot image (auto-loads at boot)."
+      done
+      if [[ ${#embedArgs[@]} -eq 0 ]]; then
+        printRed 'APATCH_EMBED_KPMS=true but no .kpm modules were built to embed.'
+        exit 1
+      fi
+    fi
+  fi
+
   (
     cd "$workDir"
     ./kptools unpack 'extracted/boot.img'
@@ -825,7 +971,8 @@ function patchAPatchBootImage() {
     mv kernel kernel.ori
     # Omitting -S uses APatch 11219+'s signature-authorized manager mode. This
     # avoids putting a reusable, root-equivalent SuperKey into CI or the image.
-    ./kptools -p -i kernel.ori -k kpimg -o kernel 2>&1 | tee kptools-patch.log
+    # Each -M/-T pair embeds a KPM (EXTRA_TYPE_KPM) that KernelPatch loads at boot.
+    ./kptools -p -i kernel.ori -k kpimg "${embedArgs[@]}" -o kernel 2>&1 | tee kptools-patch.log
 
     # KernelPatch can exit successfully and mark an image as patched even when
     # it failed to locate the arm64 relocation table. Such an image is not
@@ -908,6 +1055,35 @@ function downloadAndVerifyFromChenxiaolong() {
   fi
 }
 
+# Downloads the official signed APatch manager APK (verified by the SHA-256
+# digest GitHub publishes) and registers our system-app injection module into
+# the pinned my-avbroot-setup clone so patch.py can preinstall it. The clone is
+# pinned by PATCH_PY_COMMIT, so the all_modules() text is stable; registration
+# is grep-guarded to stay idempotent across re-runs.
+function installApatchManagerModule() {
+  resolveAPatchRelease
+  checkMandatoryVariable 'APATCH_MANAGER_URL' 'APATCH_MANAGER_SHA256'
+  downloadVerifiedFile '.tmp/apatch-manager.apk' "$APATCH_MANAGER_URL" "$APATCH_MANAGER_SHA256"
+
+  local modulesDir='.tmp/my-avbroot-setup/lib/modules'
+  if [[ ! -d "$modulesDir" ]]; then
+    printRed "my-avbroot-setup modules dir not found at $modulesDir"
+    exit 1
+  fi
+  cp 'patch-modules/apatch_manager.py' "$modulesDir/apatch_manager.py"
+  if ! grep -q 'APatchManagerModule' "$modulesDir/__init__.py"; then
+    sed -i \
+      -e '/from lib.modules.oemunlockonboot import OEMUnlockOnBootModule/a\    from lib.modules.apatch_manager import APatchManagerModule' \
+      -e '/^        OEMUnlockOnBootModule,$/a\        APatchManagerModule,' \
+      "$modulesDir/__init__.py"
+    if ! grep -q 'APatchManagerModule' "$modulesDir/__init__.py"; then
+      printRed 'Failed to register APatch manager module in my-avbroot-setup all_modules().'
+      exit 1
+    fi
+  fi
+  print "Preinstalling APatch manager $APATCH_VERSION into the OTA system image."
+}
+
 function patchOTAs() {
 
   downloadAvBroot
@@ -929,6 +1105,9 @@ function patchOTAs() {
 
   if [[ "${POTENTIAL_ASSETS['apatch']+isset}" ]]; then
     patchAPatchBootImage
+    if [[ "$APATCH_PREINSTALL_MANAGER" == 'true' ]]; then
+      installApatchManagerModule
+    fi
   fi
 
   for flavor in "${!POTENTIAL_ASSETS[@]}"; do
@@ -956,6 +1135,9 @@ function patchOTAs() {
       fi
       if [[ "$flavor" == 'apatch' ]]; then
         args+=("--patch-arg=--prepatched" "--patch-arg" "$APATCH_BOOT_IMAGE")
+        if [[ "$APATCH_PREINSTALL_MANAGER" == 'true' ]]; then
+          args+=("--module-apatch-manager" ".tmp/apatch-manager.apk")
+        fi
       fi
 
       # If env vars not set, passphrases will be queried interactively
