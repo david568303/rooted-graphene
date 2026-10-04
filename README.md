@@ -485,12 +485,16 @@ To prove the images themselves are fine and isolate a mount/verity problem from 
 verification off (`fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img`): the same partitions then
 boot. Re-flash the signed `vbmeta.img` (no flags) once the dynamic partitions are written correctly.
 
-The OTA **preinstalls the official APatch manager APK** as a system app (`/system/app/APatchManager`), injected via a
-small [`my-avbroot-setup`](https://github.com/chenxiaolong/my-avbroot-setup) module
-([`patch-modules/apatch_manager.py`](patch-modules/apatch_manager.py)); the APK is the signed release asset, pinned by
-the SHA-256 digest GitHub publishes. Because KernelPatch is patched in signature-authorized manager mode (no SuperKey),
-the preinstalled manager is trusted by its APK signature, so root should be available on first boot without a manual
-install or SuperKey entry. Set `APATCH_PREINSTALL_MANAGER=false` to ship the OTA without it and install the APK by hand.
+The OTA test artifact **bundles the official signed APatch manager APK** (`APatch-<version>.apk`, pinned by the SHA-256
+digest GitHub publishes) next to the OTA; install it by hand after boot. Because KernelPatch is patched in
+signature-authorized manager mode (no SuperKey), the manager is trusted by its APK signature, so root activates once the
+app is installed, without a SuperKey entry.
+
+Preinstalling the manager into the system image (as a system app, via the
+[`patch-modules/apatch_manager.py`](patch-modules/apatch_manager.py) [`my-avbroot-setup`](https://github.com/chenxiaolong/my-avbroot-setup)
+module, `APATCH_PREINSTALL_MANAGER=true`) is **off by default**: on `mustang` the resulting OTA bootloops (the same OTA
+boots without the injection), so injecting the app is left as an opt-in to investigate, not a shipping default.
+
 APatch itself does not include Zygisk. If Zygisk is required, install an APatch-compatible Zygisk implementation as an
 APatch module only after the basic APatch boot and root flow has been verified.
 

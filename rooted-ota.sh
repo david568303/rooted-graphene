@@ -77,9 +77,11 @@ APATCH_VERSION=${APATCH_VERSION:-${DEFAULT_APATCH_VERSION}}
 APATCH_MANAGER_URL=''
 APATCH_MANAGER_SHA256=''
 # Preinstall the official signed APatch manager APK into the OTA's system image
-# (as a system app under /system/app) so it is present and root-capable on first
-# boot. Set to 'false' to ship the OTA without it and install the APK by hand.
-APATCH_PREINSTALL_MANAGER=${APATCH_PREINSTALL_MANAGER:-'true'}
+# (as a system app under /system/app). Default off: injecting it bootloops
+# mustang (the no-embed OTA boots without it, and fails to boot with it), so the
+# APK is instead bundled next to the OTA for manual install after boot. Set to
+# 'true' only to investigate the injection path.
+APATCH_PREINSTALL_MANAGER=${APATCH_PREINSTALL_MANAGER:-'false'}
 # Embed the built KPM(s) into the patched boot so they auto-load at kernel init.
 # Default off: on mustang an embedded KPM bootloops early (stuck at the Google
 # logo, not fixable by disabling verity), and an embedded module is not
@@ -807,8 +809,17 @@ function createAPatchTestOta() {
   cp ".tmp/$asset" "$outDir/"
   (cd "$outDir" && sha256sum "$asset" > "$asset.sha256")
   writeApatchInstallScripts "$outDir" "$asset"
+
+  # Bundle the official signed manager APK next to the OTA for manual install
+  # after boot (preinstalling it into system is disabled by default because it
+  # bootloops mustang). Verified by GitHub's published SHA-256 digest.
+  resolveAPatchRelease
+  downloadVerifiedFile '.tmp/apatch-manager.apk' "$APATCH_MANAGER_URL" "$APATCH_MANAGER_SHA256"
+  cp '.tmp/apatch-manager.apk' "$outDir/APatch-${APATCH_VERSION}.apk"
+
   printGreen "APatch test OTA (signed): $outDir/$asset"
-  printGreen "To install, run flash-all.sh (Linux/macOS) or flash-all.bat (Windows) from $outDir."
+  printGreen "To install, run flash-all.sh (Linux/macOS) or flash-all.bat (Windows) from $outDir,"
+  printGreen "then install APatch-${APATCH_VERSION}.apk on the booted device."
 }
 
 # Writes a self-contained installer (flash-all.sh / flash-all.bat) plus this
