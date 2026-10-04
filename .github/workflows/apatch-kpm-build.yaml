@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get install -y jq curl git xz-utils make
+      # jq, curl, git, make and xz-utils are all preinstalled on ubuntu-latest.
       - name: Build APatch KPMs
         env:
           DEVICE_ID: ${{ inputs.device-id }}

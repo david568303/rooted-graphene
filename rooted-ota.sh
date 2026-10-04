@@ -204,8 +204,15 @@ function createAndReleaseRootedOta() {
   createRootedOta
   releaseOta
 
-  createOtaServerData
-  uploadOtaServerData
+  # APatch releases publish downloadable assets but deliberately do not update
+  # the Custota OTA feed, so a new (possibly-not-yet-validated) APatch build is
+  # never pushed to users as a seamless auto-update — they opt in by flashing.
+  if [[ "${SKIP_OTA_SERVER_UPLOAD:-false}" == 'true' ]]; then
+    printGreen "SKIP_OTA_SERVER_UPLOAD set, not updating the Custota OTA feed."
+  else
+    createOtaServerData
+    uploadOtaServerData
+  fi
 }
 
 function createRootedOta() {
@@ -322,6 +329,43 @@ function checkMandatoryVariable() {
       exit 1
     fi
   done
+}
+
+# Emits a GitHub Actions matrix of only the devices that still need a build for
+# the current GrapheneOS version, so idle scheduled runs can spawn a single gate
+# job instead of one job per device. Writes `matrix=<json>` and `any=true|false`
+# (append to $GITHUB_OUTPUT).
+#
+# Fail-safe: any lookup error includes the device, so a flaky API never silently
+# skips a needed build. release-single still runs its own checkBuildNecessary, so
+# an over-inclusive matrix just early-exits cheaply. If every lookup fails, every
+# device is included and behaviour matches the pre-gate workflow.
+#
+# Usage: emitBuildMatrix <flavorKeyword> <device:preinit> [<device:preinit> ...]
+function emitBuildMatrix() {
+  local flavor="$1"; shift
+  local releases params=(-H "Accept: application/vnd.github.v3+json")
+  [[ -n "${GITHUB_TOKEN:-}" ]] && params+=(-H "Authorization: token ${GITHUB_TOKEN}")
+  releases=$(curl --fail -sL "${params[@]}" "https://api.github.com/repos/${GITHUB_REPO}/releases" 2>/dev/null) || releases=''
+
+  local include=() pair dev preinit ver assets
+  for pair in "$@"; do
+    dev="${pair%%:*}"; preinit="${pair#*:}"
+    ver=$(curl --fail -sL "$OTA_BASE_URL/$dev-$OTA_CHANNEL" 2>/dev/null | head -n1 | awk '{print $1}') || ver=''
+    if [[ -n "$ver" && -n "$releases" ]]; then
+      assets=$(jq -r --arg tag "$ver" '.[] | select(.tag_name==$tag) | .assets[].name' <<<"$releases" 2>/dev/null) || assets=''
+      # Already built for this version/flavor -> skip it.
+      if grep -q -E "^${dev}-${ver}-.*${flavor}" <<<"$assets"; then
+        continue
+      fi
+    fi
+    include+=("{\"device-id\":\"${dev}\",\"magisk-preinit-device\":\"${preinit}\"}")
+  done
+
+  local joined
+  joined=$(IFS=,; echo "${include[*]:-}")
+  echo "matrix={\"include\":[${joined}]}"
+  if [[ ${#include[@]} -gt 0 ]]; then echo "any=true"; else echo "any=false"; fi
 }
 
 function createAssetSuffix() {
@@ -934,9 +978,12 @@ function patchAPatchBootImage() {
   local extractedDir="$workDir/extracted"
 
   if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' && "${APATCH_BOOT_TEST:-}" != 'true' && "${APATCH_FULL_TEST:-}" != 'true' ]]; then
-    if [[ "$UPLOAD_TEST_OTA" != 'true' || "$KERNELPATCH_COMMIT" != "$MUSTANG_KERNELPATCH_TEST_COMMIT" ]]; then
-      printRed 'APatch production builds are blocked for mustang: released KernelPatch 0.13.3 and 0.13.9 bootloop.'
-      printRed 'Only the pinned post-0.13.9 candidate may be published to the isolated test feed before hardware validation.'
+    # mustang is hardware-validated only with the pinned KernelPatch fork commit
+    # (released 0.13.3/0.13.9 bootloop). Allow any build that uses the pin;
+    # block one that doesn't, so a stray default build can't ship a bad image.
+    if [[ "$KERNELPATCH_COMMIT" != "$MUSTANG_KERNELPATCH_TEST_COMMIT" ]]; then
+      printRed 'APatch on mustang requires the hardware-validated pinned KernelPatch commit.'
+      printRed "Set KERNELPATCH_COMMIT=$MUSTANG_KERNELPATCH_TEST_COMMIT (or ALLOW_UNVERIFIED_APATCH=true to override)."
       exit 1
     fi
   fi

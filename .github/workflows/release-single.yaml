@@ -72,7 +72,15 @@ on:
         description: build and validate without publishing
         type: boolean
         default: false
-  
+      allow-apatch-release:
+        description: allow publishing APatch release assets (APatch is otherwise release-gated)
+        type: boolean
+        default: false
+      skip-ota-server-upload:
+        description: publish release assets but do not update the Custota OTA feed
+        type: boolean
+        default: false
+
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
     inputs:
@@ -118,6 +126,14 @@ on:
         type: boolean
       skip-release:
         description: Skip release (build only)
+        required: false
+        type: boolean
+      allow-apatch-release:
+        description: allow publishing APatch release assets
+        required: false
+        type: boolean
+      skip-ota-server-upload:
+        description: publish release assets but do not update the Custota OTA feed
         required: false
         type: boolean
       ota-version:
@@ -175,6 +191,8 @@ jobs:
           FORCE_BUILD_INPUT: ${{ toJSON(inputs.force-build) == 'true' && 'true' || 'false' }}
           UPLOAD_TEST_OTA_INPUT: ${{ toJSON(inputs.upload-test-ota) == 'true' && 'true' || 'false' }}
           SKIP_RELEASE_INPUT: ${{ toJSON(inputs.skip-release) == 'true' && 'true' || 'false' }}
+          ALLOW_APATCH_RELEASE_INPUT: ${{ toJSON(inputs.allow-apatch-release) == 'true' && 'true' || 'false' }}
+          SKIP_OTA_SERVER_UPLOAD_INPUT: ${{ toJSON(inputs.skip-ota-server-upload) == 'true' && 'true' || 'false' }}
         run: |
           {
             echo "DEVICE_ID=$(echo "$DEVICE_ID_INPUT" | xargs)"
@@ -197,6 +215,8 @@ jobs:
             echo "SKIP_PIXINCREATE=$SKIP_PIXINCREATE_INPUT"
             echo "SKIP_APATCH=$SKIP_APATCH_INPUT"
             echo "SKIP_RELEASE=$SKIP_RELEASE_INPUT"
+            echo "ALLOW_APATCH_RELEASE=$ALLOW_APATCH_RELEASE_INPUT"
+            echo "SKIP_OTA_SERVER_UPLOAD=$SKIP_OTA_SERVER_UPLOAD_INPUT"
           } >> "$GITHUB_ENV"
       - name: Validate signing secrets
         env:
@@ -216,7 +236,7 @@ jobs:
             echo "Missing required repository secrets: ${missing[*]}" >&2
             exit 1
           fi
-      - run: sudo apt-get install -y jq curl git
+      # jq, curl and git are preinstalled on ubuntu-latest; no apt step needed.
       - name: release
         env:
           GITHUB_REPO: ${{ github.repository }}

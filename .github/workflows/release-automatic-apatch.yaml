@@ -1,0 +1,69 @@
+name: Automatic APatch OTAs
+
+# Publishes APatch release ASSETS for all devices. It deliberately does NOT
+# update the Custota OTA feed (skip-ota-server-upload: true), so a new APatch
+# build is never auto-pushed to users as a seamless update — they opt in by
+# downloading and flashing. APatch is hardware-validated on mustang (pinned
+# KernelPatch fork commit); other devices use the released KernelPatch and may
+# surface device-specific issues to fix from user logs.
+#
+# Like the pixincreate workflow, a single cheap `detect` job decides which
+# devices still need an APatch build for the current release, so idle runs cost
+# one job instead of one per device.
+
+on:
+  schedule:
+    - cron: '47 */2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: automatic-apatch-otas
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.gate.outputs.matrix }}
+      any: ${{ steps.gate.outputs.any }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Decide which devices need an APatch build
+        id: gate
+        env:
+          GITHUB_REPO: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash -c '. rooted-ota.sh && emitBuildMatrix apatch \
+            stallion:sda10 rango:sda10 mustang:sda10 blazer:sda10 frankel:sda10 \
+            tegu:sda10 comet:sda10 komodo:sda10 caiman:sda10 tokay:sda10 \
+            akita:sda10 husky:sda10 shiba:sda10 felix:sda8 tangorpro:sda5 \
+            lynx:sda8 cheetah:sda8 panther:sda8 bluejay:sda8 raven:metadata \
+            oriole:metadata' >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    uses: ./.github/workflows/release-single.yaml
+    secrets: inherit
+    with:
+      device-id: ${{ matrix.device-id }}
+      magisk-preinit-device: ${{ matrix.magisk-preinit-device }}
+      skip-rootless: true
+      skip-magisk: true
+      skip-pixincreate: true
+      skip-apatch: false
+      allow-apatch-release: true
+      # Assets only; do not auto-push APatch via the Custota seamless-update feed.
+      skip-ota-server-upload: true
+      # mustang is validated only with the pinned KernelPatch fork commit; other
+      # devices use the released KernelPatch resolved by rooted-ota.sh.
+      kernelpatch-commit: ${{ matrix.device-id == 'mustang' && '9a9e876da4bde8047b234561120d46c5db19128e' || '' }}

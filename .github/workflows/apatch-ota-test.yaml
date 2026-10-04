@@ -48,7 +48,7 @@ jobs:
             echo "Missing required repository secrets: ${missing[*]}" >&2
             exit 1
           fi
-      - run: sudo apt-get install -y jq curl git cmake
+      # jq, curl, git, cmake, make and xz-utils are all preinstalled on ubuntu-latest.
       - name: Build APatch test OTA
         env:
           GITHUB_REPO: ${{ github.repository }}
