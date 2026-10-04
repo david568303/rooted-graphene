@@ -49,6 +49,11 @@ ALLOW_UNVERIFIED_APATCH=${ALLOW_UNVERIFIED_APATCH:-'false'}
 # built with SKIP_RELEASE. This escape hatch is intentionally not exposed by
 # the GitHub workflows.
 ALLOW_APATCH_RELEASE=${ALLOW_APATCH_RELEASE:-'false'}
+# Optional suffix appended to the GitHub release tag (e.g. '-apatch' so APatch
+# gets its own release and does not share the stable release's tag), and whether
+# that release is marked a GitHub pre-release (shown in the list, never "Latest").
+RELEASE_TAG_SUFFIX=${RELEASE_TAG_SUFFIX:-''}
+RELEASE_PRERELEASE=${RELEASE_PRERELEASE:-'false'}
 # https://grapheneos.org/releases#stable-channel
 OTA_VERSION=${OTA_VERSION:-'latest'}
 
@@ -274,7 +279,8 @@ function checkBuildNecessary() {
 
   if [[ -z "$GITHUB_REPO" ]]; then print "Env Var GITHUB_REPO not set, skipping check for existing release" && return; fi
 
-  print "Potential release: ${OTA_VERSION}"
+  local releaseTag="${OTA_VERSION}${RELEASE_TAG_SUFFIX}"
+  print "Potential release: ${releaseTag}"
 
   local params=()
   local url="https://api.github.com/repos/${GITHUB_REPO}/releases"
@@ -286,12 +292,12 @@ function checkBuildNecessary() {
   params+=("-H" "Accept: application/vnd.github.v3+json")
   response=$(
     curl --fail -sL "${params[@]}" "${url}" |
-      jq --arg release_tag "${OTA_VERSION}" '.[] | select(.tag_name == $release_tag) | {id, tag_name, name, published_at, assets}'
+      jq --arg release_tag "${releaseTag}" '.[] | select(.tag_name == $release_tag) | {id, tag_name, name, published_at, assets}'
   )
 
   if [[ -n ${response} ]]; then
     RELEASE_ID=$(echo "${response}" | jq -r '.id')
-    print "Release ${OTA_VERSION} exists. ID=$RELEASE_ID"
+    print "Release ${releaseTag} exists. ID=$RELEASE_ID"
     
     for flavor in "${!POTENTIAL_ASSETS[@]}"; do
       local selectedAsset POTENTIAL_ASSET_NAME="${POTENTIAL_ASSETS[$flavor]}"
@@ -353,7 +359,10 @@ function emitBuildMatrix() {
     dev="${pair%%:*}"; preinit="${pair#*:}"
     ver=$(curl --fail -sL "$OTA_BASE_URL/$dev-$OTA_CHANNEL" 2>/dev/null | head -n1 | awk '{print $1}') || ver=''
     if [[ -n "$ver" && -n "$releases" ]]; then
-      assets=$(jq -r --arg tag "$ver" '.[] | select(.tag_name==$tag) | .assets[].name' <<<"$releases" 2>/dev/null) || assets=''
+      # Search assets across all releases so a flavor in its own release tag
+      # (e.g. APatch's pre-release) is still detected. The asset name carries
+      # the device, version and flavor, so it is matched directly.
+      assets=$(jq -r '.[].assets[].name' <<<"$releases" 2>/dev/null) || assets=''
       # Already built for this version/flavor -> skip it.
       if grep -q -E "^${dev}-${ver}-.*${flavor}" <<<"$assets"; then
         continue
@@ -659,7 +668,12 @@ function downloadVerifiedFile() {
 function downloadAPatchDependencies() {
   resolveAPatchRelease
 
-  if [[ -n "$KERNELPATCH_COMMIT" ]]; then
+  if [[ -s '.tmp/kpimg-android' && -s '.tmp/kptools-linux' ]]; then
+    # Supplied by a shared build-kp job (one source build reused by every
+    # device), so each device job does not recompile KernelPatch.
+    chmod +x '.tmp/kptools-linux' || true
+    print "Using pre-supplied KernelPatch kpimg/kptools (shared build)."
+  elif [[ -n "$KERNELPATCH_COMMIT" ]]; then
     buildPinnedKernelPatch
   else
     downloadVerifiedFile '.tmp/kptools-linux' "$KERNELPATCH_KPTOOLS_URL" "$KERNELPATCH_KPTOOLS_SHA256"
@@ -1295,7 +1309,8 @@ function releaseOta() {
 function createReleaseIfNecessary() {
   checkMandatoryVariable 'GITHUB_REPO' 'GITHUB_TOKEN'
 
-  local response changelog src_repo current_commit 
+  local response changelog src_repo current_commit
+  local releaseTag="${OTA_VERSION}${RELEASE_TAG_SUFFIX}"
 
   if [[ -z "$RELEASE_ID" ]]; then
     src_repo=$(extractGithubRepo "$(git config --get remote.origin.url)")
@@ -1306,24 +1321,25 @@ function createReleaseIfNecessary() {
     if [[ "${GITHUB_REPO}" == "${src_repo}" ]]; then
       changelog=$(curl -sL -X POST -H "Authorization: token $GITHUB_TOKEN" \
         -d "{
-                \"tag_name\": \"$OTA_VERSION\",
+                \"tag_name\": \"$releaseTag\",
                 \"target_commitish\": \"main\"
               }" \
         "https://api.github.com/repos/$GITHUB_REPO/releases/generate-notes" | jq -r '.body // empty')
       # Replace \n by \\n to keep them as chars
       changelog="Update to [GrapheneOS ${OTA_VERSION}](https://grapheneos.org/releases#${OTA_VERSION_ANCHOR}).\n\n$(echo "${changelog}" | sed ':a;N;$!ba;s/\n/\\n/g')"
-    else 
-      # When pushing to different repo's GH pages, generating notes does not make too much sense. Refer to the used repo's "version" instead. 
+    else
+      # When pushing to different repo's GH pages, generating notes does not make too much sense. Refer to the used repo's "version" instead.
       current_commit=$(git rev-parse --short HEAD)
       changelog="Update to [GrapheneOS ${OTA_VERSION}](https://grapheneos.org/releases#${OTA_VERSION_ANCHOR}).\n\nRelease created using ${src_repo}@${current_commit}. See [Changelog](https://github.com/${src_repo}/blob/${current_commit}/README.md#notable-changelog)."
     fi
-    
+
     response=$(curl -sL -X POST -H "Authorization: token $GITHUB_TOKEN" \
       -d "{
-              \"tag_name\": \"$OTA_VERSION\",
+              \"tag_name\": \"$releaseTag\",
               \"target_commitish\": \"main\",
-              \"name\": \"$OTA_VERSION\",
-              \"body\": \"${changelog}\"
+              \"name\": \"$releaseTag\",
+              \"body\": \"${changelog}\",
+              \"prerelease\": ${RELEASE_PRERELEASE}
             }" \
       "https://api.github.com/repos/$GITHUB_REPO/releases")
     RELEASE_ID=$(echo "${response}" | jq -r '.id // empty')
@@ -1335,11 +1351,11 @@ function createReleaseIfNecessary() {
         -H "Authorization: token $GITHUB_TOKEN" \
         -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/${GITHUB_REPO}/releases" | \
-            jq -r --arg release_tag "${OTA_VERSION}" '.[] | select(.tag_name == $release_tag) | .id // empty')
+            jq -r --arg release_tag "${releaseTag}" '.[] | select(.tag_name == $release_tag) | .id // empty')
       if [[ -n "${RELEASE_ID}" ]]; then
-        printGreen "Cannot create release but found existing release for ${OTA_VERSION}. ID=$RELEASE_ID"
+        printGreen "Cannot create release but found existing release for ${releaseTag}. ID=$RELEASE_ID"
       else
-        printRed "Cannot create release for ${OTA_VERSION} because it seems to exist but still cannot find ID."
+        printRed "Cannot create release for ${releaseTag} because it seems to exist but still cannot find ID."
         exit 1
       fi
     else

@@ -80,6 +80,18 @@ on:
         description: publish release assets but do not update the Custota OTA feed
         type: boolean
         default: false
+      release-tag-suffix:
+        description: suffix appended to the GitHub release tag (e.g. -apatch for a separate release)
+        type: string
+        default: ''
+      release-prerelease:
+        description: mark the GitHub release as a pre-release
+        type: boolean
+        default: false
+      kernelpatch-artifact:
+        description: name of a workflow artifact holding a prebuilt kpimg-android + kptools-linux to reuse
+        type: string
+        default: ''
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -193,6 +205,8 @@ jobs:
           SKIP_RELEASE_INPUT: ${{ toJSON(inputs.skip-release) == 'true' && 'true' || 'false' }}
           ALLOW_APATCH_RELEASE_INPUT: ${{ toJSON(inputs.allow-apatch-release) == 'true' && 'true' || 'false' }}
           SKIP_OTA_SERVER_UPLOAD_INPUT: ${{ toJSON(inputs.skip-ota-server-upload) == 'true' && 'true' || 'false' }}
+          RELEASE_TAG_SUFFIX_INPUT: ${{ inputs.release-tag-suffix || '' }}
+          RELEASE_PRERELEASE_INPUT: ${{ toJSON(inputs.release-prerelease) == 'true' && 'true' || 'false' }}
         run: |
           {
             echo "DEVICE_ID=$(echo "$DEVICE_ID_INPUT" | xargs)"
@@ -217,6 +231,8 @@ jobs:
             echo "SKIP_RELEASE=$SKIP_RELEASE_INPUT"
             echo "ALLOW_APATCH_RELEASE=$ALLOW_APATCH_RELEASE_INPUT"
             echo "SKIP_OTA_SERVER_UPLOAD=$SKIP_OTA_SERVER_UPLOAD_INPUT"
+            echo "RELEASE_TAG_SUFFIX=$(echo "$RELEASE_TAG_SUFFIX_INPUT" | xargs)"
+            echo "RELEASE_PRERELEASE=$RELEASE_PRERELEASE_INPUT"
           } >> "$GITHUB_ENV"
       - name: Validate signing secrets
         env:
@@ -237,6 +253,12 @@ jobs:
             exit 1
           fi
       # jq, curl and git are preinstalled on ubuntu-latest; no apt step needed.
+      - name: Fetch shared KernelPatch build
+        if: inputs.kernelpatch-artifact != ''
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.kernelpatch-artifact }}
+          path: .tmp
       - name: release
         env:
           GITHUB_REPO: ${{ github.repository }}

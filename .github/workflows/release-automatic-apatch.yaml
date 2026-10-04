@@ -1,15 +1,19 @@
 name: Automatic APatch OTAs
 
-# Publishes APatch release ASSETS for all devices. It deliberately does NOT
-# update the Custota OTA feed (skip-ota-server-upload: true), so a new APatch
-# build is never auto-pushed to users as a seamless update — they opt in by
-# downloading and flashing. APatch is hardware-validated on mustang (pinned
-# KernelPatch fork commit); other devices use the released KernelPatch and may
-# surface device-specific issues to fix from user logs.
+# Publishes APatch release ASSETS for all devices as a GitHub PRE-RELEASE (its
+# own `<version>-apatch` tag, so it shows in the releases list but never becomes
+# "Latest" and never touches the stable release). It deliberately does NOT update
+# the Custota OTA feed, so a new APatch build is never auto-pushed to users as a
+# seamless update — they opt in by downloading and flashing.
 #
-# Like the pixincreate workflow, a single cheap `detect` job decides which
-# devices still need an APatch build for the current release, so idle runs cost
-# one job instead of one per device.
+# KernelPatch is built once from source (the validated fork commit) by the
+# build-kp job and that single build is reused to patch every device, instead of
+# recompiling per device. Every device uses the source build (not released
+# KernelPatch) to avoid the released-image bootloops; device-specific issues are
+# expected to surface from user logs and get fixed over time.
+#
+# A single cheap `detect` job decides which devices still need an APatch build
+# for the current release, so idle runs cost one job instead of one per device.
 
 on:
   schedule:
@@ -22,6 +26,10 @@ permissions:
 concurrency:
   group: automatic-apatch-otas
   cancel-in-progress: false
+
+env:
+  # Hardware-validated KernelPatch fork commit (fix/arm64-image-size).
+  KERNELPATCH_COMMIT: 9a9e876da4bde8047b234561120d46c5db19128e
 
 jobs:
   detect:
@@ -45,8 +53,26 @@ jobs:
             lynx:sda8 cheetah:sda8 panther:sda8 bluejay:sda8 raven:metadata \
             oriole:metadata' >> "$GITHUB_OUTPUT"
 
-  release:
+  build-kp:
     needs: detect
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build KernelPatch once from source (shared by all devices)
+        run: bash -c '. rooted-ota.sh && buildPinnedKernelPatch'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kernelpatch-prebuilt
+          path: |
+            .tmp/kpimg-android
+            .tmp/kptools-linux
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: [detect, build-kp]
     if: needs.detect.outputs.any == 'true'
     strategy:
       fail-fast: false
@@ -64,6 +90,9 @@ jobs:
       allow-apatch-release: true
       # Assets only; do not auto-push APatch via the Custota seamless-update feed.
       skip-ota-server-upload: true
-      # mustang is validated only with the pinned KernelPatch fork commit; other
-      # devices use the released KernelPatch resolved by rooted-ota.sh.
-      kernelpatch-commit: ${{ matrix.device-id == 'mustang' && '9a9e876da4bde8047b234561120d46c5db19128e' || '' }}
+      # Own release, marked pre-release so it never becomes "Latest".
+      release-tag-suffix: '-apatch'
+      release-prerelease: true
+      # Every device uses the validated KernelPatch fork commit, built once above.
+      kernelpatch-commit: 9a9e876da4bde8047b234561120d46c5db19128e
+      kernelpatch-artifact: kernelpatch-prebuilt
