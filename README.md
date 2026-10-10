@@ -16,9 +16,10 @@ Allows for switching between magisk and rootless via OTA upgrades.
 
 1. **Install stock GrapheneOS**, bootloader unlocked, using **`fastboot` ≥ 35.0.1**. Write down the exact version. ([how](#install-grapheneos))
 2. **Download the rooted OTA for your device and that exact version** from [Releases](https://github.com/david568303/rooted-graphene/releases).
-3. **Flash it** — pick one flavor:
-   - **APatch** — kernel-level root. Released for every device; hardware-validated on Pixel 10 Pro XL (mustang), other devices are newer so please report issues. Flash **all** partitions and register the AVB key (`avbroot ota extract --all` → `fastboot flashall` → the remaining dynamic partitions in fastbootd → `avb_pkmd.bin`), boot, then install the APatch manager APK from the matching [APatch release](https://github.com/bmax121/APatch/releases). Do **not** `adb sideload` as a first install. Full steps: [Installing the full APatch OTA](#installing-the-full-apatch-ota-on-mustang).
-   - **Magisk (pixincreate)** — seamless [Custota](https://github.com/chenxiaolong/Custota) auto-updates. Full steps: [Patch GrapheneOS with OTAs](#patch-grapheneos-with-otas-from-this-image).
+3. **Flash it** the usual way: [Patch GrapheneOS with OTAs from this image](#patch-grapheneos-with-otas-from-this-image).
+   Every release asset is the plain signed OTA zip (no installer, no wrapper archive). On mustang read the [install notes](#notes-on-installing-the-apatch-ota-on-mustang) first: a first install there needs all dynamic partitions flashed from `fastbootd`. Flavors:
+   - **APatch** — kernel-level root. Released for every device as a pre-release (`<version>-apatch`); hardware-validated on Pixel 10 Pro XL (mustang), other devices are newer so please report issues. It injects nothing into the `system` image (no Custota, no OEMUnlockOnBoot): update it by sideloading, see [Updating with a locked bootloader](#updating-with-a-locked-bootloader). After the first boot install the APatch manager APK from the matching [APatch release](https://github.com/bmax121/APatch/releases). **Keep `OEM unlocking` enabled** yourself — nothing re-enables it on boot.
+   - **Magisk (pixincreate)** — seamless [Custota](https://github.com/chenxiaolong/Custota) auto-updates.
 4. **(Optional) re-lock** the bootloader — only after confirming the device boots cleanly.
 
 If a device won't boot, capturing the kernel log of the failed boot (`adb shell su -c 'cat /sys/fs/pstore/console-ramoops-0'` after booting any working image) is the single most useful thing to attach to an issue.
@@ -170,6 +171,22 @@ Once GrapheneOS is installed
   <img src="https://github.com/schnatterer/rooted-graphene/assets/1824962/6ef90b46-2070-4d08-80d4-5f4a0e749cbe" width="216" height="480" alt="Screenshot of GrapheneOS recommending to lock">  
   Note: The OTA contains [OEMUnlockOnBoot](https://github.com/chenxiaolong/OEMUnlockOnBoot), so OEM locking should be impossible.  
   Still, better safe than sorry, keep it unlocked.
+
+#### Updating with a locked bootloader
+
+A device that already runs a build from this repo trusts this repo's OTA signing key, so a newer OTA installs from recovery
+with the bootloader **staying locked** — no unlock, no data wipe, same AVB key:
+
+1. Download the plain OTA zip for your device from [Releases](https://github.com/david568303/rooted-graphene/releases).
+   Its version must be newer than what is installed (Android refuses downgrades) and its codename must match the device.
+2. `adb reboot recovery`. At the "No command" screen hold power and press volume up once.
+3. Pick **Apply update from ADB** and run `adb sideload <ota>.zip` from the computer.
+4. Reboot from the recovery menu. Root and app data are kept.
+
+If the sideload fails (on mustang `kPostInstallMountError` has been seen), the OTA cannot be applied while locked. Then
+reinstall with the full procedure above: `fastboot flashing unlock` (wipes the device), install stock GrapheneOS of the
+same version as the OTA, flash the OTA as described, register `avb_pkmd.bin`, confirm the device boots, and only then
+`fastboot flashing lock` (wipes again).
 
 #### Set up OTA updates
 
@@ -366,18 +383,15 @@ fastboot flash boot mustang-<version>-stock-boot.img            # revert
 If it does not boot, revert, boot normally, and capture `adb bugreport`: its last kmsg (`console-ramoops`) section
 holds the kernel log of the failed boot.
 
-Once the boot image is confirmed on hardware, the **APatch OTA test** workflow builds the full OTA (the same
-KernelPatch-patched `boot.img` fed to avbroot as a prepatched image, signed with the repo keys, `patched=true`
-re-verified). It needs the signing secrets, produces a workflow artifact, and never releases or touches any OTA feed.
-This is the final check before APatch could be released.
+Once the boot image is confirmed on hardware, the APatch OTA is built and published by the **Automatic APatch OTAs**
+workflow (or `release-single` with `skip-release` to build without publishing): the same KernelPatch-patched `boot.img`
+fed to avbroot as a prepatched image, signed with the repo keys, with `patched=true` re-verified. The OTA is also checked
+to leave the `system` filesystem identical to stock apart from avbroot's `otacerts.zip` replacement.
 
-##### Installing the full APatch OTA on mustang
+##### Notes on installing the APatch OTA on mustang
 
-The **APatch OTA test** artifact ships a ready-to-run installer next to the signed OTA: `flash-all.sh` (Linux/macOS),
-`flash-all.bat` (Windows), and this repo's `avb_pkmd.bin`. With the device in bootloader mode (unlocked) and `avbroot`
-plus a recent `fastboot` on `PATH`, run the script from that folder — it extracts the OTA, writes every partition
-through fastbootd, and registers the custom AVB key for you. The manual steps below are what those scripts automate, and
-the three mustang-specific points that otherwise cause a boot loop:
+The OTA is installed the standard way (see [Install](#install)). These mustang-specific points explain boot loops seen
+when the procedure deviates:
 
 - **Flash *all* the dynamic partitions through `fastbootd`, not just what `flashall` covers.** `system`, `product`,
   `vendor`, `system_ext`, `system_dlkm` and `vendor_dlkm` live inside `super` and can only be written from userspace
@@ -393,7 +407,8 @@ the three mustang-specific points that otherwise cause a boot loop:
   `< waiting for any device >`. Flash the OTA that matches your installed GrapheneOS version (or update stock first).
 - **Do not `adb sideload` the OTA as the first install on mustang.** Sideload fails here with
   `kPostInstallMountError (63)` / "Failed to mount /metadata". Full-partition `flashall` (above) is the first-install
-  method; keep sideload for later Custota-style updates only.
+  method; sideload is for later updates of a device that already runs a build from this repo
+  ([locked-bootloader update](#updating-with-a-locked-bootloader)).
 
 If `system` does not match the signed vbmeta, dm-verity cannot build its table and init aborts — which on screen looks
 like a generic boot loop. The kernel log of the failed boot (`/sys/fs/pstore/console-ramoops-0`, readable over `adb`
@@ -409,10 +424,9 @@ To prove the images themselves are fine and isolate a mount/verity problem from 
 verification off (`fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img`): the same partitions then
 boot. Re-flash the signed `vbmeta.img` (no flags) once the dynamic partitions are written correctly.
 
-The OTA test artifact **bundles the official signed APatch manager APK** (`APatch-<version>.apk`, pinned by the SHA-256
-digest GitHub publishes) next to the OTA; install it by hand after boot. Because KernelPatch is patched in
-signature-authorized manager mode (no SuperKey), the manager is trusted by its APK signature, so root activates once the
-app is installed, without a SuperKey entry.
+Install the official signed APatch manager APK from the matching [APatch release](https://github.com/bmax121/APatch/releases)
+by hand after boot. Because KernelPatch is patched in signature-authorized manager mode (no SuperKey), the manager is
+trusted by its APK signature, so root activates once the app is installed, without a SuperKey entry.
 
 Preinstalling the manager into the system image (as a system app, via the
 [`patch-modules/apatch_manager.py`](patch-modules/apatch_manager.py) [`my-avbroot-setup`](https://github.com/chenxiaolong/my-avbroot-setup)

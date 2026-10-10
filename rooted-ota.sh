@@ -824,174 +824,11 @@ function createAPatchTestBootImage() {
   printGreen "APatch test boot image: $outDir/$name.img"
 }
 
-# Builds the full APatch OTA the normal way (KernelPatch-patched boot.img fed
-# to avbroot as a prepatched image, signed with the repo keys, patched=true
-# re-verified), but produces a workflow artifact instead of a release and never
-# touches the OTA feed. Install it the normal README way (extract, flashall,
-# custom AVB key, sideload). Needs the signing secrets.
-function createAPatchTestOta() {
-  SKIP_CLEANUP='true' # keep .tmp so the artifact survives for upload
-  SKIP_APATCH='false'
-  SKIP_ROOTLESS='true'
-  SKIP_MAGISK='true'
-  SKIP_PIXINCREATE='true'
-  FORCE_BUILD='true'      # always build, ignore any existing release asset
-  APATCH_FULL_TEST='true' # artifact-only; allowed on mustang, never released/fed
-  if [[ -z "$KERNELPATCH_COMMIT" && "$DEVICE_ID" == 'mustang' ]]; then
-    KERNELPATCH_COMMIT="$MUSTANG_KERNELPATCH_TEST_COMMIT"
-  fi
-
-  createRootedOta
-
-  local asset="${POTENTIAL_ASSETS['apatch']}"
-  if [[ -z "$asset" || ! -s ".tmp/$asset" ]]; then
-    printRed 'APatch test OTA was not produced.'
-    exit 1
-  fi
-  # Prove the signed OTA matches the published avb_pkmd.bin (the custom AVB key
-  # users flash and lock against). avbroot was fetched by patchOTAs.
-  if [[ -f 'avb_pkmd.bin' ]]; then
-    print "Verifying signed OTA against published avb_pkmd.bin"
-    if ! .tmp/avbroot ota verify --input ".tmp/$asset" --public-key-avb 'avb_pkmd.bin'; then
-      printRed 'Signed OTA does not verify against the published avb_pkmd.bin.'
-      exit 1
-    fi
-    printGreen 'Signed OTA verifies against published avb_pkmd.bin'
-  else
-    printRed 'avb_pkmd.bin not found; cannot confirm the OTA matches the published AVB key.'
-    exit 1
-  fi
-
-  local outDir='.tmp/apatch-test-ota'
-  mkdir -p "$outDir"
-  cp ".tmp/$asset" "$outDir/"
-  (cd "$outDir" && sha256sum "$asset" > "$asset.sha256")
-  writeApatchInstallScripts "$outDir" "$asset"
-
-  # Bundle the official signed manager APK next to the OTA for manual install
-  # after boot (preinstalling it into system is disabled by default because it
-  # bootloops mustang). Verified by GitHub's published SHA-256 digest.
-  resolveAPatchRelease
-  downloadVerifiedFile '.tmp/apatch-manager.apk' "$APATCH_MANAGER_URL" "$APATCH_MANAGER_SHA256"
-  cp '.tmp/apatch-manager.apk' "$outDir/APatch-${APATCH_VERSION}.apk"
-
-  printGreen "APatch test OTA (signed): $outDir/$asset"
-  printGreen "To install, run flash-all.sh (Linux/macOS) or flash-all.bat (Windows) from $outDir,"
-  printGreen "then install APatch-${APATCH_VERSION}.apk on the booted device."
-}
-
-# Writes a self-contained installer (flash-all.sh / flash-all.bat) plus this
-# repo's custom AVB public key next to the OTA. The installer writes the core
-# partitions via `fastboot flashall` (which enters fastbootd on its own) AND the
-# remaining verity-protected dynamic partitions flashall does not cover (product,
-# vendor, system_ext, system_dlkm, vendor_dlkm) — without them the device can
-# bootloop on a dm-verity mismatch — then registers our avb_pkmd.bin. It
-# deliberately does not sideload, which is unreliable as a first install.
-function writeApatchInstallScripts() {
-  local outDir="$1" otaName="$2"
-
-  cp 'avb_pkmd.bin' "$outDir/avb_pkmd.bin"
-
-  cat > "$outDir/flash-all.sh" <<'EOF'
-#!/usr/bin/env bash
-# Auto-generated installer for the rooted (APatch) GrapheneOS OTA.
-#
-# Dynamic partitions (system, product, vendor, ...) live in `super` and must be
-# written through fastbootd, which `fastboot flashall` enters automatically.
-# `fastboot flashall` only writes boot/init_boot/vbmeta/vendor_boot/system, so
-# this ALSO flashes the remaining verity-protected partitions (product, vendor,
-# system_ext, system_dlkm, vendor_dlkm) — otherwise their stale on-disk copies
-# can fail to match the signed vbmeta's dm-verity hashtree and the device
-# bootloops. Then it registers this repo's custom AVB key. Do NOT `adb sideload`
-# as a first install; that fails with kPostInstallMountError on some devices.
-#
-# IMPORTANT: flash this onto stock GrapheneOS of the SAME version as this OTA,
-# or `fastboot reboot fastbootd` below will hang at "< waiting for any device >".
-#
-# Requires `avbroot` and a recent `fastboot` on PATH, the device in bootloader
-# (fastboot) mode with the bootloader unlocked. Run from this folder.
-set -euo pipefail
-here="$(cd "$(dirname "$0")" && pwd)"
-cd "$here"
-OTA='__OTA__'
-
-echo "==> Extracting partition images from $OTA"
-avbroot ota extract --input "$OTA" --directory extracted --fastboot
-avbroot ota extract --input "$OTA" --directory extra \
-  -p product -p vendor -p system_ext -p system_dlkm -p vendor_dlkm
-export ANDROID_PRODUCT_OUT="$here/extracted"
-
-echo "==> Flashing core partitions (enters fastbootd automatically)"
-fastboot flashall --skip-reboot
-
-echo "==> Flashing remaining dynamic partitions (in fastbootd)"
-for p in product vendor system_ext system_dlkm vendor_dlkm; do
-  if [ -f "extra/$p.img" ]; then
-    fastboot flash "$p" "extra/$p.img"
-  fi
-done
-
-echo "==> Registering custom AVB key"
-fastboot reboot-bootloader
-fastboot erase avb_custom_key
-fastboot flash avb_custom_key avb_pkmd.bin
-
-echo "==> Done. Rebooting."
-fastboot reboot
-EOF
-  chmod +x "$outDir/flash-all.sh"
-
-  cat > "$outDir/flash-all.bat" <<'EOF'
-@echo off
-REM Auto-generated installer for the rooted (APatch) GrapheneOS OTA.
-REM Writes the core partitions via fastbootd (fastboot flashall) AND the
-REM remaining verity-protected dynamic partitions (product, vendor, system_ext,
-REM system_dlkm, vendor_dlkm), which flashall does not cover; without them the
-REM device can bootloop on a dm-verity mismatch. Then registers the custom AVB
-REM key. Flash onto stock GrapheneOS of the SAME version as this OTA, or the
-REM reboot into fastbootd hangs. Do NOT adb sideload as a first install.
-REM Requires avbroot and a recent fastboot on PATH, device in bootloader mode,
-REM bootloader unlocked. Run from this folder.
-setlocal enableextensions
-cd /d "%~dp0"
-set "OTA=__OTA__"
-
-echo ==^> Extracting partition images from %OTA%
-avbroot ota extract --input "%OTA%" --directory extracted --fastboot || goto :err
-avbroot ota extract --input "%OTA%" --directory extra -p product -p vendor -p system_ext -p system_dlkm -p vendor_dlkm || goto :err
-set "ANDROID_PRODUCT_OUT=%cd%\extracted"
-
-echo ==^> Flashing core partitions (enters fastbootd automatically)
-fastboot flashall --skip-reboot || goto :err
-
-echo ==^> Flashing remaining dynamic partitions (in fastbootd)
-for %%P in (product vendor system_ext system_dlkm vendor_dlkm) do (
-  if exist "extra\%%P.img" (fastboot flash %%P "extra\%%P.img" || goto :err)
-)
-
-echo ==^> Registering custom AVB key
-fastboot reboot-bootloader || goto :err
-fastboot erase avb_custom_key || goto :err
-fastboot flash avb_custom_key avb_pkmd.bin || goto :err
-
-echo ==^> Done. Rebooting.
-fastboot reboot
-goto :eof
-
-:err
-echo Flashing FAILED. See the output above.
-exit /b 1
-EOF
-
-  sed -i "s/__OTA__/${otaName}/g" "$outDir/flash-all.sh" "$outDir/flash-all.bat"
-  print "Wrote flash-all.sh and flash-all.bat (with repo avb_pkmd.bin) to $outDir"
-}
-
 function patchAPatchBootImage() {
   local workDir=".tmp/apatch-${DEVICE_ID}-${OTA_VERSION}"
   local extractedDir="$workDir/extracted"
 
-  if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' && "${APATCH_BOOT_TEST:-}" != 'true' && "${APATCH_FULL_TEST:-}" != 'true' ]]; then
+  if [[ "$DEVICE_ID" == 'mustang' && "$ALLOW_UNVERIFIED_APATCH" != 'true' && "${APATCH_BOOT_TEST:-}" != 'true' ]]; then
     # mustang is hardware-validated only with the pinned KernelPatch fork commit
     # (released 0.13.3/0.13.9 bootloop). Allow any build that uses the pin;
     # block one that doesn't, so a stray default build can't ship a bad image.
@@ -1114,6 +951,45 @@ function verifyAPatchOta() {
   )
 
   printGreen "Verified APatch in final OTA boot image: $otaFile"
+}
+
+# Fails unless the patched OTA's system filesystem is identical to the stock
+# one apart from /system/etc/security/otacerts.zip. avbroot replaces that file
+# on purpose (it makes the on-device updater reject official GrapheneOS OTAs,
+# which a bootloader locked to our AVB key could not boot); anything else
+# differing means a module or patch is still writing into system.
+function verifyAPatchSystemUnmodified() {
+  local otaFile="$1"
+  local tools="$PWD/.tmp"
+  local dir=".tmp/apatch-system-${DEVICE_ID}-${OTA_VERSION}"
+  local name input
+
+  rm -rf "$dir"
+  for name in stock patched; do
+    input=".tmp/$OTA_TARGET.zip"
+    [[ "$name" == 'patched' ]] && input="$otaFile"
+    mkdir -p "$dir/$name/unpacked"
+    "$tools/avbroot" ota extract --input "$input" --directory "$dir/$name" --partition system
+    (
+      cd "$dir/$name/unpacked"
+      "$tools/avbroot" avb unpack --quiet --input ../system.img
+      "$tools/afsr" unpack --input raw.img
+    )
+    rm -f "$dir/$name/system.img" "$dir/$name/unpacked/raw.img"
+  done
+
+  local differences
+  differences=$(diff -rq "$dir/stock/unpacked/fs_tree" "$dir/patched/unpacked/fs_tree" |
+    grep -v -F -x "Files $dir/stock/unpacked/fs_tree/system/etc/security/otacerts.zip and $dir/patched/unpacked/fs_tree/system/etc/security/otacerts.zip differ" ||
+    true)
+  rm -rf "$dir"
+
+  if [[ -n "$differences" ]]; then
+    printRed 'APatch OTA changes the system partition beyond otacerts.zip:'
+    echo "$differences"
+    exit 1
+  fi
+  printGreen "Verified system partition is stock apart from otacerts.zip: $otaFile"
 }
 
 function downloadAvBroot() {
@@ -1243,7 +1119,12 @@ function patchOTAs() {
         dockerEnvArgs+=("--env" "PASSPHRASE_OTA")
       fi
 
-      if [[ "${SKIP_MODULES}" != 'true' ]]; then
+      # Custota and OEMUnlockOnBoot both write into the system partition. The
+      # APatch flavor ships without them (it is updated by sideloading the OTA,
+      # not through a Custota feed), so its system image stays stock apart from
+      # avbroot's own otacerts.zip replacement; verifyAPatchSystemUnmodified
+      # proves that after patching.
+      if [[ "${SKIP_MODULES}" != 'true' && "$flavor" != 'apatch' ]]; then
         args+=("--module-custota" ".tmp/custota.zip")
         args+=("--module-oemunlockonboot" ".tmp/oemunlockonboot.zip")
       fi
@@ -1268,6 +1149,7 @@ function patchOTAs() {
 
       if [[ "$flavor" == 'apatch' ]]; then
         verifyAPatchOta "$targetFile"
+        verifyAPatchSystemUnmodified "$targetFile"
       fi
 
       printGreen "Finished patching file ${targetFile}"
