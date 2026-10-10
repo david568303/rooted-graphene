@@ -51,7 +51,6 @@ jobs:
       device-id: ${{ matrix.device-id }}
       magisk-preinit-device: ${{ matrix.magisk-preinit-device }}
       skip-rootless: true
-      skip-magisk: true
       skip-pixincreate: false
       # APatch is published by its own workflow (release-automatic-apatch.yaml).
       skip-apatch: true

@@ -18,7 +18,7 @@ Allows for switching between magisk and rootless via OTA upgrades.
 2. **Download the rooted OTA for your device and that exact version** from [Releases](https://github.com/david568303/rooted-graphene/releases).
 3. **Flash it** the usual way: [Patch GrapheneOS with OTAs from this image](#patch-grapheneos-with-otas-from-this-image).
    Every release asset is the plain signed OTA zip (no installer, no wrapper archive). On mustang read the [install notes](#notes-on-installing-the-apatch-ota-on-mustang) first: a first install there needs all dynamic partitions flashed from `fastbootd`. Flavors:
-   - **APatch** — kernel-level root. Released for every device as a pre-release (`<version>-apatch`); hardware-validated on Pixel 10 Pro XL (mustang), other devices are newer so please report issues. It injects nothing into the `system` image (no Custota, no OEMUnlockOnBoot): update it by sideloading, see [Updating with a locked bootloader](#updating-with-a-locked-bootloader). After the first boot install the APatch manager APK from the matching [APatch release](https://github.com/bmax121/APatch/releases). **Keep `OEM unlocking` enabled** yourself — nothing re-enables it on boot.
+   - **APatch** — kernel-level root. Built per device on demand (**Release single device**, published as a `<version>-apatch` pre-release); hardware-validated on Pixel 10 Pro XL (mustang) only. It injects nothing into the `system` image (no Custota, no OEMUnlockOnBoot): update it by sideloading, see [Updating with a locked bootloader](#updating-with-a-locked-bootloader). After the first boot install the APatch manager APK from the matching [APatch release](https://github.com/bmax121/APatch/releases). **Keep `OEM unlocking` enabled** yourself — nothing re-enables it on boot.
    - **Magisk (pixincreate)** — seamless [Custota](https://github.com/chenxiaolong/Custota) auto-updates.
 4. **(Optional) re-lock** the bootloader — only after confirming the device boots cleanly.
 
@@ -191,7 +191,7 @@ same version as the OTA, flash the OTA as described, register `avb_pkmd.bin`, co
 #### Set up OTA updates
 
 * [Disable System Updater app](https://github.com/chenxiaolong/avbroot#ota-updates) (or block its network access) from Settings -> Apps -> See all apps -> (three-dot menu) -> Show system -> (find "System Updater" app).
-* Open Custota app and set the OTA server URL to point to this OTA server: https://rooted-graphene.github.io/ota/magisk
+* Open Custota app and set the OTA server URL to point to this OTA server: https://rooted-graphene.github.io/ota/pixincreate
 
 Alternatively you could do updates manually via `adb sideload`:
 * reboot the device and begin holding the volume down button until it boots up into the bootloader interface
@@ -210,7 +210,7 @@ And then upgrade.
 (if custota should tell you that you're on the latest version, you can force an upgrade by long pressing `Version` and 
 then selecting `Allow reinstall`).
 
-If you want to gain root again, just switch back to this URL in custota: https://rooted-graphene.github.io/ota/magisk/
+If you want to gain root again, just switch back to this URL in custota: https://rooted-graphene.github.io/ota/pixincreate/
 And then upgrade.
 
 ## Magisk preinit strings
@@ -304,13 +304,11 @@ Also, some parts of kernelsu seem to be closed source, which feels suspicious an
 Another alternative might be to use a version of magisk (like [the one maintained by pixincreate](https://github.com/pixincreate/Magisk)) that contains patches to make zygisk work.  
 This still has some limitations, like [certain modules checking for magisk's signature won't work](https://github.com/schnatterer/rooted-graphene/commit/da0cd817c2665798df46df1aeb7caef9d98b79d0#r141746606).
 
-This variant can be built as an additional `pixincreate` flavor, next to the regular `magisk` and `rootless` ones.  
+This variant can be built as an additional `pixincreate` flavor, next to the `rootless` one.  
 It is disabled by default, so it is never silently forced on existing users. Enable it by setting `SKIP_PIXINCREATE=false`
-(or the `skip-pixincreate` input in `release-single.yaml`). It requires `MAGISK_PREINIT_DEVICE` to be set, just like the regular magisk flavor,
-and uses `PIXINCREATE_VERSION`, independently from the regular `MAGISK_VERSION` used by upstream Magisk.
+(or the `skip-pixincreate` input in `release-single.yaml`). It requires `MAGISK_PREINIT_DEVICE` to be set and uses `PIXINCREATE_VERSION`.
 `PIXINCREATE_VERSION=latest` resolves the newest stable GitHub release once per build. The release asset and its GitHub-provided SHA-256 digest
 are both verified before patching. `PIXINCREATE_APK_NAME` can override the release asset name when a release uses a nonstandard name.
-If you only want the `pixincreate` flavor, you can additionally set `SKIP_MAGISK=true`.
 
 The resulting OTAs are published as a separate flavor, so in Custota you would point to the `pixincreate` path of your OTA server, e.g.
 `https://rooted-graphene.github.io/ota/pixincreate`. As with the other flavors, you can switch between them via OTA updates.
@@ -340,16 +338,15 @@ signed OTA is re-extracted and KernelPatch must report `patched=true` for its bo
 signature authorization for the official manager, so the automated build does not create, store, or expose a reusable
 SuperKey.
 
-APatch OTAs are currently never published: no release assets and no OTA feed entries, including the test feed. A run
-that would release with `SKIP_APATCH=false` fails before building; use `SKIP_RELEASE=true` (`skip-release` in the
-workflow) to build APatch without publishing. The automatic workflow never builds APatch.
+APatch OTAs are built on demand, one device at a time, with the **Release single device** workflow (`skip-apatch` off,
+`kernelpatch-commit` set to the pinned commit below). Publishing needs `allow-apatch-release`; use `skip-release` to
+build without publishing. Nothing builds APatch automatically and no APatch OTA is ever added to a Custota feed
+(`skip-ota-server-upload`).
 
 Persistent APatch installs now boot on `mustang` with the fork's KernelPatch 0.13.9 (the `fix/arm64-image-size` branch
 below); 0.13.3 still does not boot at all. The earlier "persistent bootloop" was **not** a KernelPatch fault — it was an
 install-procedure problem flashing the full OTA, resolved by writing the dynamic partitions through `fastbootd`
-(see [Installing the full APatch OTA on mustang](#installing-the-full-apatch-ota-on-mustang)). APatch OTAs are still not
-auto-published and automated builds still fail closed until a flashed image passes hardware validation; this does not
-affect the Magisk or pixincreate flavors.
+(see [Notes on installing the APatch OTA on mustang](#notes-on-installing-the-apatch-ota-on-mustang)).
 
 For isolated testing, `KERNELPATCH_COMMIT=9a9e876da4bde8047b234561120d46c5db19128e` builds both `kpimg` and `kptools`
 from the [`fix/arm64-image-size`](https://github.com/david568303/KernelPatch/tree/fix/arm64-image-size) branch of the
@@ -383,8 +380,8 @@ fastboot flash boot mustang-<version>-stock-boot.img            # revert
 If it does not boot, revert, boot normally, and capture `adb bugreport`: its last kmsg (`console-ramoops`) section
 holds the kernel log of the failed boot.
 
-Once the boot image is confirmed on hardware, the APatch OTA is built and published by the **Automatic APatch OTAs**
-workflow (or `release-single` with `skip-release` to build without publishing): the same KernelPatch-patched `boot.img`
+Once the boot image is confirmed on hardware, the APatch OTA is built by the **Release single device**
+workflow (with `skip-release` to build without publishing): the same KernelPatch-patched `boot.img`
 fed to avbroot as a prepatched image, signed with the repo keys, with `patched=true` re-verified. The OTA is also checked
 to leave the `system` filesystem identical to stock apart from avbroot's `otacerts.zip` replacement.
 
