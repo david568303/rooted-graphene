@@ -323,7 +323,7 @@ single-device workflow). `APATCH_VERSION=latest` resolves the latest stable [APa
 release. KernelPatch is independently pinned by `KERNELPATCH_VERSION` because APatch 11224's older pinned KernelPatch
 0.13.3 does not boot on `mustang`. KernelPatch 0.13.9 boots on `mustang` both nonpersistently (`fastboot boot`) and as
 a persistent install, once the full OTA is flashed as described under
-[Installing the full APatch OTA on mustang](#installing-the-full-apatch-ota-on-mustang); 0.13.3 does not boot at all. Set
+[Notes on installing the APatch OTA on mustang](#notes-on-installing-the-apatch-ota-on-mustang); 0.13.3 does not boot at all. Set
 `KERNELPATCH_VERSION=apatch` to use the version pinned by APatch itself, or `latest` to resolve the latest stable
 [KernelPatch](https://github.com/bmax121/KernelPatch) release. The matching `kpimg-android` and `kptools-linux` artifacts
 are downloaded from the official KernelPatch release, and every artifact is checked against GitHub's published SHA-256
